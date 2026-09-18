@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Run the Omarchy Mac E2E evidence collector without cloning the repo.
+#
+# Fetches the collector and its vendored helpers from the same ref into a
+# cache directory, then executes it. The collector itself is network-free
+# and redacts before writing; --submit is the only network call it makes,
+# and only when you pass it.
+#
+# Usage (same flags as scripts/collect_e2e.py):
+#   bin/omarchy-mac-e2e-collect --interview --out e2e-mytest.tar.gz
+#   bin/omarchy-mac-e2e-collect --out e2e-mytest.tar.gz \
+#     --submit https://mlx-omarchy-community-data.joshua-s-warren.workers.dev
+#
+# Pin a ref with OMARCHY_MAC_REF (default: quattro). Re-running refreshes
+# nothing unless you pass --refresh.
+set -euo pipefail
+
+REF="${OMARCHY_MAC_REF:-quattro}"
+BASE="${OMARCHY_MAC_RAW_BASE:-https://raw.githubusercontent.com/omacom/omarchy-mac/$REF/scripts}"
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-mac-e2e/$REF"
+
+if [ "${1:-}" = "--refresh" ]; then
+  shift
+  rm -rf "$CACHE"
+fi
+
+mkdir -p "$CACHE"
+for f in collect_common collect_submit collect_quick collect_macos collect_e2e; do
+  if [ ! -s "$CACHE/$f.py" ]; then
+    echo "fetching $f.py ($REF)" >&2
+    curl -fsSL "$BASE/$f.py" -o "$CACHE/$f.py"
+  fi
+done
+chmod 700 "$CACHE"
+
+exec python3 "$CACHE/collect_e2e.py" "$@"
