@@ -32,6 +32,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -500,14 +501,23 @@ def _primary_device(devices):
 
 
 def probe_mesa(redactor):
-    """Vulkan stack identity from `vulkaninfo --summary`."""
+    """Vulkan stack identity from `vulkaninfo --summary`.
+
+    `probe` states the probe's own fate so a missing binary is never
+    read as an unsupported GPU: "missing" (tool not installed),
+    "failed" (tool ran but errored), "ok" (parsed).
+    """
     if platform.system() == "Darwin":
         return collect_macos.not_applicable()
-    out = {"available": False, "properties": {}, "summary": None}
+    out = {"available": False, "probe": None, "properties": {}, "summary": None}
     rec = run_tool(["vulkaninfo", "--summary"], redactor,
                    label="vulkaninfo --summary", timeout=30)
     out["vulkaninfo"] = rec
-    if not rec["available"] or rec["exit_code"] != 0:
+    if not rec["available"]:
+        out["probe"] = "missing"
+        return out
+    if rec["exit_code"] != 0:
+        out["probe"] = "failed"
         return out
     devices = _device_blocks(rec["stdout"])
     primary = _primary_device(devices)
@@ -519,20 +529,30 @@ def probe_mesa(redactor):
              "driverID", "driverInfo")
     out["gpu"] = {k: primary[k] for k in known if k in primary}
     out["available"] = bool(out["gpu"])
+    out["probe"] = "ok" if out["available"] else "failed"
     return out
 
 
 def probe_mesa_package(redactor):
-    """Mesa package version as a cross-check; distro-specific and optional."""
+    """Mesa package version as a cross-check; distro-specific and optional.
+
+    Each query is gated on its package manager actually existing, so an
+    Arch host does not carry a pointless dpkg not-found record.
+    """
     if platform.system() == "Darwin":
         return collect_macos.not_applicable()
-    return {
-        "pacman": run_tool(["pacman", "-Q", "mesa"], redactor,
-                           label="pacman -Q mesa", timeout=15),
-        "dpkg": run_tool(["dpkg-query", "-W", "-f=${Package} ${Version}\\n",
-                          "mesa"], redactor, label="dpkg-query mesa",
-                         timeout=15),
-    }
+    out = {}
+    if shutil.which("pacman"):
+        out["pacman"] = run_tool(["pacman", "-Q", "mesa"], redactor,
+                                 label="pacman -Q mesa", timeout=15)
+        out["vulkan-asahi"] = run_tool(["pacman", "-Q", "vulkan-asahi"],
+                                       redactor, label="pacman -Q vulkan-asahi",
+                                       timeout=15)
+    if shutil.which("dpkg-query"):
+        out["dpkg"] = run_tool(
+            ["dpkg-query", "-W", "-f=${Package} ${Version}\\n", "mesa"],
+            redactor, label="dpkg-query mesa", timeout=15)
+    return out
 
 def probe_ane(redactor):
     """Apple Neural Engine visibility: device node and libane."""

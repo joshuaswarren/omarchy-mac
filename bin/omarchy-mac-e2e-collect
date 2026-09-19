@@ -1,5 +1,5 @@
-#!/usr/bin/env bash
-# Run the Omarchy Mac E2E evidence collector without cloning the repo.
+#!/bin/bash
+# omarchy:summary=Collect Mac compatibility results for community submissions
 #
 # Fetches the collector and its vendored helpers from the same ref into a
 # cache directory, then executes it. The collector itself is network-free

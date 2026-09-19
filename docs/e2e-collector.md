@@ -18,15 +18,21 @@ this brings the same machinery to the Mac installer checklist.
 
 | Section | Checklist coverage | Method |
 |---|---|---|
-| `identity` | §1 test assignment | interactive prompts, reused from `./e2e-identity.json` |
+| `identity` | §1 test assignment | interactive prompts, reused from `./e2e-identity.json` (written back after an interactive run), plus machine-recorded identity: marketing model, board and SoC from devicetree compatible strings, kernel, OS, collection date. Identity only — never a feature verdict |
 | `baseline` | §3 fresh-Asahi baseline | the exact documented commands, plus derived facts: LUKS present, `/boot` separate, freshness marker |
-| `mlx` | — (bonus) | the mlx-omarchy quick capability report: host/devicetree, Mesa/Vulkan, ANE devicetree, installed distributions |
-| `install-logs` | §4–5 | tails of the three documented logs, `omarchy-mac-setup --status`, service state |
+| `mlx` | — (bonus) | the mlx-omarchy quick capability report: host/devicetree, Mesa/Vulkan, ANE devicetree, installed distributions. A missing `vulkaninfo` records `probe: missing` — it never reads as an unsupported GPU |
+| `hardware` | hardware matrix evidence | presence-only records for the wiki features: DRM connectors, audio cards, USB, Thunderbolt, wireless, Bluetooth, cameras, input devices, suspend states. Presence is never converted into "working" |
+| `install-logs` | §4–5 | tails of the three documented logs (a missing log records *why* it can be absent — absence is data, never a hardware failure) plus `journalctl -u omarchy-mac-setup.service`, `omarchy-mac-setup --status`, service state |
 | `boot` | §5–7 | `journalctl --list-boots`, current-boot warnings, failed system and user units, `/boot` tree |
 | `install-state` | §6 | omarchy version/path, pinned packages, `pacman -Dk`, `omarchy-migrate --pending` (exit semantics recorded, never interpreted), `omarchy-done` checks, swap |
 | `security` | §7 | setup conf/sudoers presence, passwordless-sudo probe, sshd exposure, nft ruleset, user journal warnings |
 | `macos` | §2–3 | optional: pasted macOS-side output via `--from-macos FILE` |
-| `interview` | §5–9 human items | `--interview` walks all 34 judgment checkboxes (PASS/FAIL/SKIP/NA + notes), persisted to `./e2e-answers.json` |
+| `interview` | §5–9 human items + wiki hardware matrix | `--interview` walks all 34 judgment checkboxes (PASS/FAIL/SKIP/NA) and 18 per-feature hardware answers (WORKS/LIMITATION/BROKEN/UNKNOWN/NA, one per Apple-Silicon-hardware.md matrix column, with the peripheral model and connection in the note). Persisted to `./e2e-answers.json` |
+
+Stage verdicts in the report roll up honestly: a stage answered entirely NA
+renders `NA` (the stage does not exist on a `--no-encrypt` run, for example),
+and a PASS+SKIP mix renders `PARTIAL` — never `SKIP`, which would claim the
+stage went untested.
 
 Every external command is bounded (timeout, capped output); a missing tool
 or absent log is recorded as data, never a crash; partial runs keep what
@@ -36,18 +42,22 @@ the per-kind redaction counts ship in the manifest.
 
 ## Volunteer flow
 
-```bash
-# no clone needed:
-bin/omarchy-mac-e2e-collect --interview --out e2e-<testid>.tar.gz
+Before merge, download the wrapper and select the PR branch:
 
-# or from a checkout:
-python3 scripts/collect_e2e.py --interview --out e2e-<testid>.tar.gz
+```bash
+curl -fsSL https://raw.githubusercontent.com/joshuaswarren/omarchy-mac/e2e-collector/bin/omarchy-mac-e2e-collect -o omarchy-mac-e2e-collect
+export OMARCHY_MAC_REF=e2e-collector
+export OMARCHY_MAC_RAW_BASE=https://raw.githubusercontent.com/joshuaswarren/omarchy-mac/e2e-collector/scripts
+bash omarchy-mac-e2e-collect --refresh --interview --out e2e-my-mac.tar.gz
 ```
+
+From a checkout of the PR branch, run `python3 scripts/collect_e2e.py --interview --out e2e-my-mac.tar.gz` instead. After merge, the installed command uses `omacom/omarchy-mac@quattro` by default; neither export is needed.
 
 That prints a preview manifest, then writes:
 
 - `e2e-<testid>.tar.gz` — deterministic archive (all section JSON, the
-  checklist itself, the pre-filled report template)
+  checklist itself, the pre-filled report template with the per-feature
+  hardware matrix)
 - `e2e-<testid>.submission.md` — paste-ready cover: machine identity,
   derived storage facts, redaction summary, and the checklist report
   template auto-filled where the machine could answer
@@ -60,16 +70,18 @@ https://mlx-omarchy-community-data.joshua-s-warren.workers.dev/v1/results/ef89a1
 
 ## Provenance
 
-`collect_common.py`, `collect_submit.py`, `collect_quick.py`,
-`collect_macos.py` are vendored unchanged from
-joshuaswarren/mlx-omarchy (`scripts/`), except one lazy `bench_matrix`
-import in the vendored `collect_macos.py` so this set stays
-self-contained. Those collectors are field-proven: checksummed wheels,
-consent-gated uploads, deterministic archives, PII redaction with
-per-kind counts — tested by mlx-omarchy's own suite of 1441 test lines.
+The four helpers (`collect_common.py`, `collect_submit.py`, `collect_quick.py`, and `collect_macos.py`) originate from `joshuaswarren/mlx-omarchy`. Local changes keep the macOS helper self-contained and distinguish a missing Vulkan probe from an unavailable GPU.
 
 ## Verification
 
+- `python3 tests/test-collect-e2e.py` — focused stdlib-only regression
+  checks: stage-verdict roll-ups (all-NA → NA, PASS+SKIP → PARTIAL), the
+  probe-missing Vulkan summary, log-absence wording, per-feature answer
+  separation (old combined-question PASS never transfers to a split
+  feature; hand-written `ANSWER; note` values load normalized), wiki
+  symbol rendering, and archive/submission preservation of feature
+  answers.
+- A real terminal interview checks all 67 prompts, persists answers, and verifies that first-run identity and feature results reach the archive. Without `--interview`, collection never prompts. These checks run on Linux x86_64; they do not establish Apple hardware compatibility.
 - `bun test` (worker side, mlx-omarchy): 67/67 unit, including the new
   e2e-kind schema fixture and a smoke scenario; live worker deployed and
   `check_schema_identity.py` green.
