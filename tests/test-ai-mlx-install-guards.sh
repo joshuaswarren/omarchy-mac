@@ -7,9 +7,11 @@
 # deletes every artifact unconditionally. Without the guard, a failed install
 # over a working one removes the working one.
 #
-# Everything here runs against a disposable HOME with stub commands on PATH, so
-# it needs no Apple hardware and installs nothing. The two cases that need the
-# real pinned installer skip themselves when there is no network.
+# Everything here runs against a disposable HOME with stub commands on PATH,
+# so it needs no Apple hardware and installs nothing. Every stub is executable
+# and proven to shadow the real command before anything runs, so no host -- a
+# real M1 included -- can reach a real package transaction. The cases that
+# need the real pinned installer skip themselves when there is no network.
 
 set -euo pipefail
 
@@ -43,8 +45,16 @@ mkdir -p "$stub_dir"
 printf '#!/bin/bash\nexit 0\n' >"$stub_dir/omarchy-hw-apple"
 # The real pinned installer reaches omarchy-pkg-add on Apple hardware; stub
 # it so a passing gate can never trigger a system-wide pacman transaction.
-printf '#!/bin/bash\necho "omarchy-pkg-add $*" >>"$work/pkg-add.log"\nexit 0\n' >"$stub_dir/omarchy-pkg-add"
-chmod +x "$stub_dir/omarchy-hw-apple"
+# Embed the log path because $work is not exported to the stub.
+pkg_log="$work/pkg-add.log"
+printf '#!/bin/bash\nprintf "%%s\\n" "omarchy-pkg-add $*" >>%q\nexit 0\n' "$pkg_log" >"$stub_dir/omarchy-pkg-add"
+# Fail closed if the installer falls back to sudo pacman.
+sudo_log="$work/sudo.log"
+printf '#!/bin/bash\nprintf "%%s\\n" "sudo $*" >>%q\nexit 1\n' "$sudo_log" >"$stub_dir/sudo"
+# Reach the package step on every host without building a real venv.
+printf '#!/bin/bash\nif [[ ${1:-} == -m ]]; then echo aarch64; else exec /usr/bin/uname "$@"; fi\n' >"$stub_dir/uname"
+printf '#!/bin/bash\nexit 0\n' >"$stub_dir/python3"
+chmod +x "$stub_dir/omarchy-hw-apple" "$stub_dir/omarchy-pkg-add" "$stub_dir/sudo" "$stub_dir/uname" "$stub_dir/python3"
 printf 'apple,j313\0apple,t8103\0' >"$work/compatible"
 
 curl_log="$work/curl.log"
@@ -64,12 +74,23 @@ make_curl_stub() {
 }
 make_curl_stub
 
+# A non-executable stub would silently fall through to the real command.
+for cmd in omarchy-hw-apple omarchy-pkg-add curl sudo uname python3; do
+  [[ -x $stub_dir/$cmd ]] || fail "the $cmd stub is not executable"
+  resolved="$(PATH="$stub_dir:$PATH" command -v "$cmd")" &&
+    [[ $resolved == "$stub_dir/$cmd" ]] ||
+    fail "$cmd would run '${resolved:-nothing}', not the stub"
+done
+pass "every stub is executable and shadows the real command on PATH"
+
 # Runs the entry against the disposable HOME. Echoes its exit status; output is
 # left in $work/out for the caller to inspect.
 run_entry() {
   local home="$1" prefix="$2"
   local status=0
   : >"$curl_log"
+  : >"$pkg_log"
+  : >"$sudo_log"
   PATH="$stub_dir:$PATH" \
     HOME="$home" \
     MLX_OMARCHY_HOME="$prefix" \
@@ -108,6 +129,8 @@ for artifact in prefix bin-launcher bin-demo bin-info desktop-entry; do
     fail "$artifact present: refusal should name how to remove it"
   [[ ! -s $curl_log ]] ||
     fail "$artifact present: refused only after fetching the installer: $(cat "$curl_log")"
+  [[ ! -s $pkg_log ]] ||
+    fail "$artifact present: refused but omarchy-pkg-add ran: $(cat "$pkg_log")"
 
   # The point of the guard: what was there is still there.
   case $artifact in
@@ -131,10 +154,13 @@ if command -v curl >/dev/null &&
   /usr/bin/env curl -fsSL --max-time 20 \
     "https://raw.githubusercontent.com/$repo/$ref/install.sh" -o "$fixture" 2>/dev/null; then
   pass "fetched the pinned installer (${ref:0:12}) as a fixture"
+  sha="$(grep -m1 '^INSTALLER_SHA256=' "$INSTALL" | cut -d'"' -f2)"
+  echo "$sha  $fixture" | sha256sum -c --quiet - ||
+    fail "the downloaded installer does not match the pinned checksum"
+  pass "the fixture matches the pinned checksum"
   export INSTALLER_FIXTURE="$fixture"
 
-  # The real installer, failing early on its own hardware/interpreter checks
-  # before it writes anything: a partial fresh install.
+  # The fixture served as SHA256SUMS contains no wheel, forcing failure.
   home="$work/home-fail"
   prefix="$home/.local/share/mlx-omarchy"
   mkdir -p "$home/.local/bin" "$home/.local/share/applications"
@@ -147,6 +173,12 @@ if command -v curl >/dev/null &&
     fail "the old bug is back: a real failure reported as exit 0"
   fi
   pass "a failing install exits $got and names that status"
+
+  [[ $(cat "$pkg_log") == "omarchy-pkg-add lapack blas openblas" ]] ||
+    fail "expected exactly 'omarchy-pkg-add lapack blas openblas', got: $(cat "$pkg_log")"
+  pass "the runtime packages are requested through omarchy-pkg-add"
+  [[ ! -s $sudo_log ]] || fail "the pacman fallback was reached: $(cat "$sudo_log")"
+  pass "the pacman fallback was never reached"
 
   grep -q "Nothing from mlx-omarchy is left installed" "$work/out" ||
     fail "a successful cleanup should say so: $(cat "$work/out")"
