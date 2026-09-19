@@ -17,11 +17,20 @@ written as they complete, so an interrupted run keeps what finished.
 
 Sections (schema_version 1):
   identity       test assignment answers (checklist section 1), reused
-                 across runs from e2e-identity.json in the working dir
+                 across runs from e2e-identity.json in the working dir,
+                 plus machine-recorded identity: marketing model, board
+                 and SoC from devicetree compatible strings, kernel,
+                 OS, collection date (identity only -- never a verdict)
   baseline       the fresh-Asahi baseline commands (section 3): mounts,
                  lsblk, df, free, plus a freshness marker
-  install-logs   omarchy-mac-setup/install/pacman log tails and the
-                 setup service state (sections 4-5)
+  hardware       presence-only hardware records for the wiki feature
+                 matrix (DRM connectors, audio, USB, Thunderbolt,
+                 wireless, cameras, inputs, suspend states). Presence
+                 is never converted into a feature verdict; the
+                 interview's per-feature answers stay the only source
+  install-logs   omarchy-mac-setup/install/pacman log tails (with
+                 recorded absence notes -- a missing log is data, not
+                 a failure) and the setup service state (sections 4-5)
   boot           journal boot list, current-boot warnings, failed
                  system and user units (sections 5-7)
   install-state  omarchy version and path, pinned package versions,
@@ -32,8 +41,10 @@ Sections (schema_version 1):
                  installed mlx-omarchy distributions and default device
   macos          optional: pasted macOS-side output via --from-macos
   interview      optional: --interview walks every human-judgment
-                 checkbox (sections 5-9) and stores PASS/FAIL/SKIP/NA
-                 with notes
+                 checkbox (sections 5-9, PASS/FAIL/SKIP/NA) and every
+                 wiki hardware feature (WORKS/LIMITATION/BROKEN/
+                 UNKNOWN/NA, with the peripheral model and connection
+                 in the note), persisted to ./e2e-answers.json
 
 Privacy: every captured value passes through the shared Redactor (names,
 paths, IPs, MACs, serials, credential-shaped strings). The default run
@@ -54,9 +65,11 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -79,6 +92,7 @@ SECTION_TIMEOUTS = {
     "identity": 10,
     "baseline": 60,
     "mlx": 240,
+    "hardware": 60,
     "install-logs": 60,
     "boot": 90,
     "install-state": 60,
@@ -86,14 +100,33 @@ SECTION_TIMEOUTS = {
     "macos": 10,
     "interview": 300,
 }
-SECTION_ORDER = ("identity", "baseline", "mlx", "install-logs", "boot",
-                 "install-state", "security", "macos", "interview")
+SECTION_ORDER = ("identity", "baseline", "mlx", "hardware", "install-logs",
+                 "boot", "install-state", "security", "macos", "interview")
 
 SETUP_LOGS = (
     "/var/log/omarchy-mac-setup.log",
     "/var/log/omarchy-install.log",
     "/var/log/pacman.log",
 )
+
+# Why a log can be absent where that is knowable, so "never written by
+# design" is distinguishable from "the install did not reach that stage"
+# -- and so neither is ever read as a hardware failure.
+LOG_ABSENCE_NOTES = {
+    "/var/log/omarchy-mac-setup.log":
+        "known: the current bin/omarchy-mac-setup never writes this file "
+        "(its $LOG variable is never a redirection target), so absence is "
+        "expected on every run and is NOT a failure. Guided-setup output "
+        "lives in journalctl -u omarchy-mac-setup.service (captured below).",
+    "/var/log/omarchy-install.log":
+        "written by the Asahi-side install; absent before that stage runs, "
+        "which is data about progress, not a hardware or install failure.",
+    "/var/log/pacman.log":
+        "absent before packages are installed; absence is progress data, "
+        "not a failure.",
+}
+LOG_ABSENCE_GENERIC = ("a missing log is recorded as data; absence does "
+                       "not imply any hardware failed")
 
 PINNED_PACKAGES = ("omarchy", "omarchy-settings", "hyprland", "hyprtoolkit",
                    "hyprland-guiutils", "aquamarine")
@@ -121,6 +154,42 @@ def sox_field(path):
             return fh.read().replace("\x00", " ").strip()
     except OSError:
         return None
+
+
+def machine_identity():
+    """Recorded hardware/system identity from the booted system.
+
+    Identity only: this records which machine and software versions are
+    under test. Nothing here implies any feature works; the wiki matrix
+    answers stay human-only (see FEATURE_ITEMS).
+    """
+    dt = "/sys/firmware/devicetree/base"
+    compatible = [p for p in (sox_field(dt + "/compatible") or "").split() if p]
+    soc = next((c.split(",", 1)[1].upper() for c in compatible
+                if re.match(r"^apple,t\d{4}", c)), None)
+    board = next((c for c in compatible if re.match(r"^apple,j\d", c)), None)
+    os_pretty = None
+    try:
+        with open("/etc/os-release", "r", errors="replace") as fh:
+            for line in fh:
+                if line.startswith("PRETTY_NAME="):
+                    os_pretty = line.split("=", 1)[1].strip().strip('"')
+    except OSError:
+        pass
+    return {
+        "marketing_model": sox_field(dt + "/model"),
+        "board_compatible": board,
+        "soc": soc,
+        "compatible": compatible,
+        "kernel": platform.release(),
+        "arch": platform.machine(),
+        "os": os_pretty,
+        "collected_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                          time.gmtime()),
+        "note": "identity recorded from the booted system; soc/board are "
+                "derived from devicetree compatible strings, the Apple "
+                "model identifier (Mac14,10 style) stays a human prompt",
+    }
 
 
 def section_identity(redactor, answers_path):
@@ -165,9 +234,19 @@ def section_identity(redactor, answers_path):
             out[key] = None
         if not out.get(key):
             out["prompts"].append(question)
-    devtree = "/sys/firmware/devicetree/base"
-    out["devicetree"] = {"model": sox_field(devtree + "/model"),
-                         "compatible": sox_field(devtree + "/compatible")}
+    machine = machine_identity()
+    out["devicetree"] = {"model": machine["marketing_model"],
+                         "compatible": machine["compatible"]}
+    out["machine"] = machine
+    if interactive:
+        merged = {k: v for k, v in prior.items() if k not in ("prompts",)}
+        merged.update({k: out[k] for k, _ in prompts})
+        try:
+            with open(answers_path, "w") as fh:
+                json.dump(merged, fh, indent=2, sort_keys=True)
+                fh.write("\n")
+        except OSError:
+            pass
     return out
 
 
@@ -240,9 +319,16 @@ def section_baseline(redactor):
 
 
 def section_install_logs(redactor):
-    out = {"available": True, "logs": {}}
+    out = {"available": True, "logs": {}, "absence_notes": {}}
     for path in SETUP_LOGS:
-        out["logs"][path] = read_path(redactor, path, max_chars=200_000)
+        rec = read_path(redactor, path, max_chars=200_000)
+        out["logs"][path] = rec
+        if not rec.get("present"):
+            out["absence_notes"][path] = \
+                LOG_ABSENCE_NOTES.get(path, LOG_ABSENCE_GENERIC)
+    out["setup_service_journal"] = tool(
+        ["journalctl", "-u", "omarchy-mac-setup.service", "-b", "--no-pager"],
+        redactor, label="journalctl -u omarchy-mac-setup", timeout=45)
     out["setup_status"] = tool(
         ["/usr/local/bin/omarchy-mac-setup", "--status"], redactor,
         label="omarchy-mac-setup --status", timeout=30)
@@ -343,6 +429,90 @@ def section_macos(redactor, from_file):
     return data
 
 
+# --- hardware presence ------------------------------------------------------
+
+def section_hardware(redactor):
+    """Machine-observable hardware presence, one record per probe.
+
+    Presence is NOT function. A connector, device, or node appearing here
+    never marks the matching wiki feature as working; the only source for
+    feature verdicts is the interview's hardware answers (FEATURE_ITEMS).
+    """
+    out = {"available": True,
+           "note": "presence records only; feature verdicts come from the "
+                   "interview, never from this section"}
+    connectors = []
+    try:
+        for name in sorted(os.listdir("/sys/class/drm"))[:64]:
+            if not re.fullmatch(r"(card\d+-)?[A-Za-z]+(-[A-Za-z0-9.]+)+", name) \
+                    or not os.path.isdir(os.path.join("/sys/class/drm", name)):
+                continue
+            rec = {"connector": name}
+            try:
+                with open(os.path.join("/sys/class/drm", name, "status"),
+                          "r") as fh:
+                    rec["status"] = fh.read().strip()
+            except OSError:
+                pass
+            connectors.append(rec)
+    except OSError:
+        pass
+    out["drm_connectors"] = connectors
+    out["audio_cards"] = read_path(redactor, "/proc/asound/cards",
+                                   max_chars=8000)
+    out["usb_devices"] = tool(["lsusb"], redactor, label="lsusb", timeout=20)
+    tb = []
+    try:
+        for dev in sorted(os.listdir("/sys/bus/thunderbolt/devices"))[:16]:
+            rec = {"device": dev}
+            for field in ("device_name", "vendor_name"):
+                val = sox_field(os.path.join(
+                    "/sys/bus/thunderbolt/devices", dev, field))
+                if val:
+                    rec[field] = val
+            tb.append(rec)
+    except OSError:
+        pass
+    out["thunderbolt_devices"] = tb
+    wifi = []
+    try:
+        for net in sorted(os.listdir("/sys/class/net"))[:16]:
+            if os.path.isdir(os.path.join("/sys/class/net", net, "wireless")) \
+                    or os.path.isdir(os.path.join("/sys/class/net", net,
+                                                  "phy80211")):
+                wifi.append(net)
+    except OSError:
+        pass
+    out["wireless_interfaces"] = wifi
+    out["rfkill"] = tool(["rfkill", "list"], redactor, label="rfkill list",
+                         timeout=15)
+    out["bluetooth"] = tool(["bluetoothctl", "show"], redactor,
+                            label="bluetoothctl show", timeout=15)
+    cams = []
+    try:
+        for vdev in sorted(os.listdir("/sys/class/video4linux"))[:16]:
+            name = sox_field(os.path.join("/sys/class/video4linux", vdev,
+                                          "name"))
+            cams.append({"device": vdev, "name": name})
+    except OSError:
+        pass
+    out["cameras"] = cams
+    inputs = []
+    try:
+        with open("/proc/bus/input/devices", "r", errors="replace") as fh:
+            for line in fh:
+                if line.startswith("N: Name="):
+                    inputs.append(redactor.apply(line.split("=", 1)[1].strip()))
+    except OSError:
+        pass
+    out["input_names"] = inputs[:64]
+    out["suspend_states"] = read_path(redactor, "/sys/power/state",
+                                      max_chars=1000)
+    out["suspend_modes"] = read_path(redactor, "/sys/power/mem_sleep",
+                                     max_chars=1000)
+    return out
+
+
 # --- interview -------------------------------------------------------------
 
 # Human-judgment items from the checklist, verbatim in intent. The script
@@ -388,43 +558,137 @@ INTERVIEW_ITEMS = [
 
 VALID_ANSWERS = ("PASS", "FAIL", "SKIP", "NA")
 
+# One separate answer per wiki hardware-matrix feature
+# (Apple-Silicon-hardware.md). The machine hardware section records
+# presence only; only the volunteer can say a feature works, so each
+# feature keeps its own human answer in the wiki's own vocabulary, and
+# detected hardware is never converted into a working verdict.
+FEATURE_ITEMS = (
+    "internal display", "HDMI display", "USB-C DisplayPort display",
+    "USB devices", "Thunderbolt dock", "Wi-Fi", "Bluetooth",
+    "speakers", "headphones", "microphone", "HDMI audio",
+    "suspend", "camera", "Touch ID", "keyboard", "trackpad",
+    "GPU inference", "Neural Engine",
+)
+# Features usually exercised through a peripheral: the note field records
+# what was attached (model and connection), so the wiki keeps that detail.
+FEATURE_PERIPHERAL = ("HDMI display", "USB-C DisplayPort display",
+                      "USB devices", "Thunderbolt dock", "headphones",
+                      "microphone", "HDMI audio", "camera")
+FEATURE_ANSWERS = ("WORKS", "LIMITATION", "BROKEN", "UNKNOWN", "NA")
+FEATURE_SYMBOLS = {"WORKS": "✓", "LIMITATION": "!", "BROKEN": "✕",
+                   "NA": "n/a"}
+
+
+def feature_symbol(answer):
+    """Map a stored answer to the wiki symbol; unrecorded is '?', which in
+    the wiki means exactly 'not known yet'."""
+    if not answer:
+        return "?"
+    return FEATURE_SYMBOLS.get(answer, "?")
+
+
+def parse_answer(raw, prior, vocab):
+    """Split one input line into (answer, note) under `vocab`.
+
+    'ANSWER; note text'. Blank keeps `prior`. Returns (None, None) when
+    the answer is not in vocab, so the caller can reprompt.
+    """
+    raw = (raw or "").strip()
+    head, _, note = raw.partition(";")
+    answer = head.strip().upper() or prior
+    if answer and answer not in vocab:
+        return None, None
+    return answer, (note.strip() or None)
+
+
+def interview_items():
+    """Every interview item as (group, item, vocab, is_feature)."""
+    for group, item in INTERVIEW_ITEMS:
+        yield group, item, VALID_ANSWERS, False
+    for item in FEATURE_ITEMS:
+        yield "hardware", item, FEATURE_ANSWERS, True
+
+
+def _save_answers(path, answers, notes):
+    """Persist the merged answer set, preserving every existing key.
+
+    Old keys (including combined-question keys from earlier collector
+    versions) are kept verbatim; split per-feature keys start empty and
+    only ever receive what the volunteer answered, so a combined PASS
+    from an older run never transfers to a split feature. Notes ride
+    along so a normalized "ANSWER; note" value round-trips.
+    """
+    try:
+        with open(path, "w") as fh:
+            json.dump({"answers": answers, "notes": notes}, fh,
+                      indent=2, sort_keys=True)
+            fh.write("\n")
+    except OSError:
+        pass
+
 
 def section_interview(redactor, answers_path):
-    out = {"available": True, "interactive": False, "answers": {}, "notes": {}}
+    out = {"available": True, "interactive": False, "answers": {},
+           "notes": {}}
+    prior_answers = {}
+    prior_notes = {}
     if os.path.exists(answers_path):
+        stored = {}
         try:
             with open(answers_path, "r") as fh:
-                out["answers"] = json.load(fh).get("answers", {})
+                stored = json.load(fh)
         except (OSError, ValueError):
-            pass
+            stored = {}
+        prior_answers = stored.get("answers", {})
+        prior_notes = {k: redactor.apply(v) for k, v in
+                       stored.get("notes", {}).items()}
+        for group, item, vocab, _is_feature in interview_items():
+            key = f"{group}::{item}"
+            raw = prior_answers.get(key)
+            if not isinstance(raw, str) or ";" not in raw:
+                continue
+            answer, note = parse_answer(raw, "", vocab)
+            if answer and note:
+                prior_answers[key] = answer
+                prior_notes[key] = redactor.apply(note)
+    out["answers"] = dict(prior_answers)
+    out["notes"] = prior_notes
     if not sys.stdin.isatty():
         out["note"] = ("not a TTY; holding existing answers only. Rerun with "
-                       "--interview on the console to record PASS/FAIL/SKIP/NA "
-                       "per item")
+                       "--interview on the console to record "
+                       "PASS/FAIL/SKIP/NA per checklist item and "
+                       "WORKS/LIMITATION/BROKEN/UNKNOWN/NA per hardware "
+                       "feature")
         return out
     out["interactive"] = True
-    print(f"\n=== E2E interview: {len(INTERVIEW_ITEMS)} items. "
-          f"Answer PASS / FAIL / SKIP / NA, then an optional note. "
-          f"Blank keeps the previous answer. ===\n")
-    for group, item in INTERVIEW_ITEMS:
+    items = list(interview_items())
+    print(f"\n=== E2E interview: {len(items)} items "
+          f"({len(INTERVIEW_ITEMS)} checklist + {len(FEATURE_ITEMS)} "
+          f"hardware features). Answer with the shown vocabulary, then an "
+          f"optional '; note'. Blank keeps the previous answer. ===\n")
+    for group, item, vocab, is_feature in items:
         key = f"{group}::{item}"
         prior = out["answers"].get(key, "")
+        hint = "/".join(vocab)
+        if is_feature and item in FEATURE_PERIPHERAL:
+            hint += "; note the peripheral model and connection"
         while True:
             try:
-                raw = input(f"[{group}] {item}\n  PASS/FAIL/SKIP/NA"
-                            f"{f' (now: {prior})' if prior else ''}: ").strip()
+                raw = input(f"[{group}] {item}\n  {hint}"
+                            f"{f' (now: {prior})' if prior else ''}: ")
             except EOFError:
                 raw = ""
-            answer = raw.split(";", 1)[0].strip().upper() or prior
-            if answer in VALID_ANSWERS or answer == "":
+            answer, note = parse_answer(raw, prior, vocab)
+            if answer is not None:
                 break
-            print(f"  unrecognized {raw!r}; use PASS, FAIL, SKIP or NA "
-                  f"(optionally 'FAIL; note text')")
-        note = raw.split(";", 1)[1].strip() if ";" in raw else ""
+            print(f"  unrecognized {raw.strip()!r}; use one of "
+                  f"{', '.join(vocab)} (optionally 'ANSWER; note text')")
         if answer:
             out["answers"][key] = answer
         if note:
             out["notes"][key] = redactor.apply(note)
+    _save_answers(answers_path, out["answers"], out["notes"])
     return out
 
 
@@ -444,28 +708,60 @@ REPORT_TEMPLATE_ITEMS = [
 ]
 
 
+def stage_verdict(answers, group):
+    have = [answers.get(f"{g}::{item}") for g, item in INTERVIEW_ITEMS if g == group]
+    valid = [answer for answer in have if answer in VALID_ANSWERS]
+    if not valid:
+        return "UNRECORDED"
+    if "FAIL" in valid:
+        return "FAIL"
+    if len(valid) != len(have):
+        return "PARTIAL"
+    effective = [answer for answer in valid if answer != "NA"]
+    if not effective:
+        return "NA"
+    if all(answer == "PASS" for answer in effective):
+        return "PASS"
+    if all(answer == "SKIP" for answer in effective):
+        return "SKIP"
+    return "PARTIAL"
+
+
+def render_feature_matrix(answers, notes):
+    """The wiki hardware matrix, one line per feature.
+
+    Only recorded human answers appear as verdicts; an unrecorded
+    feature renders '?' (the wiki's own 'not known yet') plus the
+    machine-presence pointer, so detection can never become 'working'.
+    """
+    lines = ["Hardware features (wiki matrix; ✓ works · ! limitation · "
+             "✕ broken · ? not known · n/a not built in):"]
+    for feature in FEATURE_ITEMS:
+        key = f"hardware::{feature}"
+        answer = answers.get(key)
+        if answer not in FEATURE_ANSWERS:
+            answer = None
+        cell = feature_symbol(answer)
+        line = f"  {feature}: {answer or 'UNRECORDED'} ({cell})"
+        note = notes.get(key)
+        if note:
+            line += f" — {note}"
+        lines.append(line)
+    return lines
+
+
 def render_report_md(identity, files):
     """The checklist report template, pre-filled from machine evidence."""
     state = _member(files, "install-state.json")
     base = _member(files, "baseline.json")
     sec = _member(files, "security.json")
     interview = _member(files, "interview.json")
+    # Machine identity is recorded by the identity section, not the
+    # parent's prompt-answer hint.
+    machine = (_member(files, "identity.json").get("machine")
+               or identity.get("machine") or {})
     answers = interview.get("answers", {})
     notes = interview.get("notes", {})
-
-    def stage_verdict(group):
-        have = [answers.get(f"{g}::{i}") for g, i in INTERVIEW_ITEMS
-                if g == group]
-        have = [a for a in have if a]
-        if not have:
-            return "UNRECORDED"
-        if "FAIL" in have:
-            return "FAIL"
-        if "SKIP" in have:
-            return "SKIP"
-        if all(a == "PASS" for a in have):
-            return "PASS"
-        return "PARTIAL"
 
     lines = ["", "## E2E report (auto-filled where marked [auto])", ""]
     lines.append("```text")
@@ -476,6 +772,12 @@ def render_report_md(identity, files):
                  f"{identity.get('mac_model') or ''} / "
                  f"{identity.get('model_identifier') or ''} / "
                  f"{identity.get('soc') or ''} / {identity.get('ram_ssd') or ''}")
+    lines.append(f"Machine [auto]: {machine.get('marketing_model') or 'unknown'}"
+                 f"; board {machine.get('board_compatible') or 'unknown'}"
+                 f"; SoC {machine.get('soc') or 'unknown'}"
+                 f"; {machine.get('os') or 'os unknown'}"
+                 f"; kernel {machine.get('kernel') or 'unknown'}"
+                 f"; collected {machine.get('collected_at_utc') or 'unknown'}")
     lines.append(f"macOS version: {identity.get('macos_version') or ''}")
     lines.append(f"Asahi image and filesystem: {identity.get('asahi_image') or ''}")
     lines.append(f"Encryption and keymap: "
@@ -497,9 +799,10 @@ def render_report_md(identity, files):
             present_sudo = sec.get("setup_sudoers_present")
             lines.append(f"{label}: cleanup_conf={present_conf} "
                          f"cleanup_sudoers={present_sudo} "
-                         f"(interview: {stage_verdict('persist')})")
+                         f"(interview: {stage_verdict(answers, 'persist')})")
             continue
-        lines.append(f"{label}: {stage_verdict(group)}")
+        lines.append(f"{label}: {stage_verdict(answers, group)}")
+    lines += render_feature_matrix(answers, notes)
     lines.append("Overall: (PASS / FAIL / BLOCKED — volunteer decides)")
     lines.append("First failing checkpoint:")
     lines.append("Expected:")
@@ -534,6 +837,8 @@ def section_child(name, ws, args):
         elif name == "mlx":
             data = collect_quick.collect()
             data["section"] = "mlx-omarchy quick capability report (vendored)"
+        elif name == "hardware":
+            data = section_hardware(redactor)
         elif name == "install-logs":
             data = section_install_logs(redactor)
         elif name == "boot":
@@ -561,6 +866,9 @@ def section_child(name, ws, args):
 def run_sections(ws, args, redactor):
     for name in SECTION_ORDER:
         if name in args.skip:
+            continue
+        if args.interview and sys.stdin.isatty() and name in ("identity", "interview"):
+            section_child(name, ws, args)
             continue
         timeout = args.timeout or SECTION_TIMEOUTS[name]
         rec = run_tool(
@@ -612,12 +920,50 @@ def assemble_files(ws, identity, redactor):
     return files, unavailable, redaction
 
 
+def vulkan_summary(quick):
+    """One honest line about the Vulkan probe.
+
+    A missing vulkaninfo binary is a missing probe, not an unsupported
+    GPU: PR464 review showed 'Vulkan: unavailable' reading as a graphics
+    failure on a machine whose desktop rendered fine. Falls back to the
+    installed driver package when the probe tool is absent.
+    """
+    mesa = quick.get("mesa") or {}
+    gpu = mesa.get("gpu") or {}
+    if gpu:
+        return (f"{gpu.get('deviceName') or 'unknown'} / "
+                f"{gpu.get('driverName') or 'unknown'}")
+    if not mesa:
+        return "not probed (no mlx section in this run)"
+    rec = mesa.get("vulkaninfo") or {}
+    if rec.get("available") is False or rec.get("error") == "not-found":
+        pkg = (quick.get("mesa_package") or {}).get("vulkan-asahi") or {}
+        driver = pkg.get("stdout", "").strip() \
+            if pkg.get("exit_code") == 0 else ""
+        detail = f"driver package {driver}" if driver \
+            else "driver package unverified"
+        return (f"probe missing (vulkaninfo not installed; this is not a "
+                f"GPU or driver verdict) — {detail}")
+    return "unavailable"
+
+
+def logs_presence_line(logs):
+    """The install-logs cover line: absence never reads as failure."""
+    tails = [p for p, rec in (logs.get("logs") or {}).items()
+             if rec.get("present")]
+    if tails:
+        return f"Install logs present: {', '.join(tails)}"
+    return ("Install logs present: none (an absent log is not a hardware "
+            "or install failure; see install-logs.json absence_notes — "
+            "some logs are only written after certain stages, and the "
+            "guided-setup log is never written to file at all)")
+
+
 def build_submission(manifest, files, identity):
     base = _member(files, "baseline.json")
     quick = _member(files, "mlx.json")
     host = quick.get("host") or {}
     dt = host.get("devicetree") or {}
-    gpu = (quick.get("mesa") or {}).get("gpu") or {}
     mlx = quick.get("mlx") or {}
     logs = _member(files, "install-logs.json")
     state = _member(files, "install-state.json")
@@ -637,8 +983,7 @@ def build_submission(manifest, files, identity):
     lines.append(f"Installed omarchy: {omarchy_v or 'not recorded'}")
     lines.append(f"Device: {dt.get('model') or 'unknown'} "
                  f"({dt.get('compatible') or 'unknown compatible'}); "
-                 f"Vulkan: {gpu.get('deviceName') or 'unavailable'} / "
-                 f"{gpu.get('driverName') or 'unavailable'}")
+                 f"Vulkan: {vulkan_summary(quick)}")
     dists = mlx.get("distributions") or {}
     lines.append(f"mlx-omarchy: {dists.get('mlx-omarchy') or 'not installed'}, "
                  f"default device {mlx.get('default_device') or 'unavailable'}")
@@ -646,8 +991,7 @@ def build_submission(manifest, files, identity):
     lines.append(f"Pinned packages: {pinned or 'not recorded'}")
     lines.append(f"setup conf present: {sec.get('setup_conf_present')}; "
                  f"setup sudoers present: {sec.get('setup_sudoers_present')}")
-    tails = [p for p, rec in (logs.get("logs") or {}).items() if rec.get("present")]
-    lines.append(f"Install logs present: {', '.join(tails) or 'none'}")
+    lines.append(logs_presence_line(logs))
     lines.append(f"Sections unavailable: "
                  f"{', '.join(manifest.get('sections_unavailable', [])) or 'none'}")
     lines.append(f"Redaction applied before writing: "
@@ -702,8 +1046,8 @@ def main():
                     help="upload the redacted archive to an e2e collection "
                          "endpoint speaking the community-data protocol")
     ap.add_argument("--interview", action="store_true",
-                    help="walk the human-judgment checklist items "
-                         "(PASS/FAIL/SKIP/NA) on the console")
+                    help="record identity, checklist verdicts, and hardware "
+                         "feature results on the console")
     ap.add_argument("--identity-file", default="e2e-identity.json",
                     help="test-assignment answers are reused from this file "
                          "(default: ./e2e-identity.json)")
@@ -727,6 +1071,17 @@ def main():
     args = ap.parse_args()
 
     if args._section:
+        # The parent passes real paths via the hidden flags; without
+        # this reconciliation the child would fall back to the defaults
+        # (./e2e-answers.json) and silently hold nothing when the
+        # volunteer used --answers-file/--identity-file/--from-macos.
+        if args._answers:
+            args.answers_file = args._answers
+        if args._identity:
+            args.identity_file = args._identity
+        if args._from_macos:
+            args.from_macos = args._from_macos
+        sys.stdin = open(os.devnull)
         section_child(args._section, args._workspace, args)
         return
 
@@ -736,14 +1091,7 @@ def main():
     args.identity_file = os.path.abspath(args.identity_file)
     args.answers_file = os.path.abspath(args.answers_file)
 
-    identity_hint = {}
-    if os.path.exists(args.identity_file):
-        try:
-            with open(args.identity_file, "r") as fh:
-                identity_hint = json.load(fh)
-        except (OSError, ValueError):
-            pass
-    identity_hint["from_macos"] = args.from_macos
+    identity_hint = {"from_macos": args.from_macos}
 
     keep = False
     if args.workspace:
@@ -761,7 +1109,7 @@ def main():
     archive_name = os.path.basename(args.out) if args.out \
         else "omarchy-mac-e2e.tar.gz"
     manifest, data, payload = finalize(files, unavailable, redaction,
-                                       archive_name, identity_hint)
+                                       archive_name, _member(files, "identity.json"))
     print(json.dumps(manifest, indent=2, sort_keys=True))
     print(f"[preview] archive: {archive_name} bytes={len(data)} "
           f"sha256={hashlib.sha256(data).hexdigest()}")

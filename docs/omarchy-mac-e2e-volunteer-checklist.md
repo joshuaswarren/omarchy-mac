@@ -132,6 +132,8 @@ Do not call a warning harmless merely because the installer continued. Record al
 - [ ] Change a theme and confirm the desktop remains usable.
 - [ ] Record any missing application, notification error, visual defect, or obvious performance problem.
 
+Note: the wiki's hardware matrix tracks one answer per feature (internal display, HDMI display, USB-C display, USB, Thunderbolt/docks, Wi-Fi, Bluetooth, speakers, headphones, microphone, HDMI audio, suspend, camera, Touch ID, keyboard, trackpad, GPU inference, Neural Engine). Running the evidence collector with `--interview` asks for each of these separately — WORKS / LIMITATION / BROKEN / UNKNOWN / n/a (not built in) — plus the peripheral model and connection you tested with. What a probe detected is never treated as proof a feature works; only your answer fills the matrix.
+
 Collect the installed-system state:
 
 ```bash
@@ -192,15 +194,17 @@ If a shell is reachable, collect:
 ```bash
 /usr/local/bin/omarchy-mac-setup --status
 systemctl status omarchy-mac-setup.service --no-pager
+journalctl -u omarchy-mac-setup.service -b --no-pager
 journalctl -b --no-pager
 journalctl --list-boots
 findmnt
 lsblk -f
 df -h / /boot
-tail -n 200 /var/log/omarchy-mac-setup.log
 tail -n 200 /var/log/omarchy-install.log
 tail -n 200 /var/log/pacman.log
 ```
+
+Note: the current guided installer writes no `/var/log/omarchy-mac-setup.log` (its log variable is never redirected to a file), so do not treat that file's absence as a failure — the guided-setup output is in `journalctl -u omarchy-mac-setup.service`, captured above and by the evidence collector.
 
 For an earlier failed boot, select the actual boot ID shown by `journalctl --list-boots`; do not assume `-1` is the failed attempt. Review logs before publishing and remove passwords, tokens, serial numbers, private hostnames, and other personal data.
 
