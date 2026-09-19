@@ -12,8 +12,12 @@ print(next(p for root in mlx.__path__
   temporary=$(mktemp "$bin/.mlx-omarchy-info.XXXXXX")
   trap 'rm -f "$temporary"' EXIT
   printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$info" >"$temporary"
-  chmod +x "$temporary"
+  chmod 0755 "$temporary"
   mv -n "$temporary" "$bin/mlx-omarchy-info"
 )
 
-migrate_mlx_info
+# A broken venv (orphaned by a Python minor bump, missing openblas) is a
+# routine Arch state, not a reason to block every later migration at each
+# login over an optional AI demo. Record and continue.
+migrate_mlx_info ||
+  echo "Skipping: MLX is installed but its venv did not answer." >&2

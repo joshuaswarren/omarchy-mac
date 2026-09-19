@@ -41,6 +41,9 @@ mkdir -p "$stub_dir"
 # The entry gates on Apple hardware first; say yes, and present an M1 device
 # tree, so the paths under test are the ones that run on a real M1.
 printf '#!/bin/bash\nexit 0\n' >"$stub_dir/omarchy-hw-apple"
+# The real pinned installer reaches omarchy-pkg-add on Apple hardware; stub
+# it so a passing gate can never trigger a system-wide pacman transaction.
+printf '#!/bin/bash\necho "omarchy-pkg-add $*" >>"$work/pkg-add.log"\nexit 0\n' >"$stub_dir/omarchy-pkg-add"
 chmod +x "$stub_dir/omarchy-hw-apple"
 printf 'apple,j313\0apple,t8103\0' >"$work/compatible"
 
