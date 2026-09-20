@@ -25,10 +25,21 @@ if [ "${1:-}" = "--refresh" ]; then
 fi
 
 mkdir -p "$CACHE"
+fetch() { curl -fsSL "$1/$2.py" -o "$CACHE/$2.py" 2>/dev/null; }
 for f in collect_common collect_submit collect_quick collect_macos collect_e2e; do
-  if [ ! -s "$CACHE/$f.py" ]; then
-    echo "fetching $f.py ($REF)" >&2
-    curl -fsSL "$BASE/$f.py" -o "$CACHE/$f.py"
+  if [ ! -s "$CACHE/$f.py" ] && ! fetch "$BASE" "$f"; then
+    if [ -z "${FALLBACK_BASE:-}" ]; then
+      # Pre-merge, quattro does not carry the collector yet; the PR branch
+      # does. Say which base served the file so provenance stays visible.
+      FALLBACK_BASE="https://raw.githubusercontent.com/joshuaswarren/omarchy-mac/e2e-collector/scripts"
+      echo "not on $BASE; using the PR branch until this merges:" >&2
+      echo "  $FALLBACK_BASE" >&2
+    fi
+    fetch "$FALLBACK_BASE" "$f" || {
+      echo "Could not fetch $f.py from either base." >&2
+      echo "Set OMARCHY_MAC_RAW_BASE to a tree that carries scripts/." >&2
+      exit 1
+    }
   fi
 done
 chmod 700 "$CACHE"
