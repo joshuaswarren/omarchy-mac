@@ -42,16 +42,14 @@ the per-kind redaction counts ship in the manifest.
 
 ## Volunteer flow
 
-Before merge, download the wrapper and select the PR branch:
+Before this PR merges, fetch the wrapper from the PR branch:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/joshuaswarren/omarchy-mac/e2e-collector/bin/omarchy-mac-e2e-collect -o omarchy-mac-e2e-collect
-export OMARCHY_MAC_REF=e2e-collector
-export OMARCHY_MAC_RAW_BASE=https://raw.githubusercontent.com/joshuaswarren/omarchy-mac/e2e-collector/scripts
-bash omarchy-mac-e2e-collect --refresh --interview --out e2e-my-mac.tar.gz
+curl -fsSL https://raw.githubusercontent.com/joshuaswarren/omarchy-mac/e2e-collector/bin/omarchy-mac-e2e-collect -o e2e-collect
+bash e2e-collect --interview --out e2e-<testid>.tar.gz
 ```
 
-From a checkout of the PR branch, run `python3 scripts/collect_e2e.py --interview --out e2e-my-mac.tar.gz` instead. After merge, the installed command uses `omacom/omarchy-mac@quattro` by default; neither export is needed.
+The wrapper tries `quattro` first, falls back to this branch when the collector is not merged yet, and prints which tree served the files. After merge the same two commands work unchanged. From a checkout, `python3 scripts/collect_e2e.py --interview --out e2e-<testid>.tar.gz` runs the same collector.
 
 That prints a preview manifest, then writes:
 
