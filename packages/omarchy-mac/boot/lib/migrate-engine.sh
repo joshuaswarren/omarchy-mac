@@ -1370,6 +1370,8 @@ tidy_completed() {
     rm -rf "$cache" "$set_copy" "$state/installed.now" "$state/overwrite"
     rm -f "$reboot_pending"
   fi
+  # omarchy-mac-migrate-bootstrap's download, now installed, unless this runs from it.
+  [[ -n ${payload_version:-} ]] || rm -rf "$R/var/lib/omarchy-mac/bootstrap"
 }
 
 # --- Commands ----------------------------------------------------------------

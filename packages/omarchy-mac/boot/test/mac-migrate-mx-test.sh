@@ -626,6 +626,7 @@ done
 bash "$ROOT/install" "$R"
 reboot_into_aurora
 output=$(migrate verify 2>&1) && [[ -f $(state_dir)/complete ]] || fail "the installed package finishes the migration" "$output"
+[[ ! -e $R/var/lib/omarchy-mac/bootstrap ]] || fail "the finished migration removes the download it ran from"
 pass "from a download of omarchy-mac-boot, one transaction installs it and removes omarchy-dev, whose commands change hands without an overwrite"
 
 # Without omarchy's conflict, omarchy-dev would leave in the removals after the
