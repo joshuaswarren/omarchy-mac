@@ -47,8 +47,12 @@ run_migration >/dev/null || fail "an entrypoint: the migration completes"
 [[ $(cat "$tmp/ran") == $'sudo omarchy-lifecycle-dispatch migrate\ndispatch migrate' ]] || fail "an entrypoint: dispatched as root" "$(cat "$tmp/ran")"
 echo 2 >"$tmp/status"
 if run_migration >/dev/null 2>&1; then fail "a refused platform migration leaves the migration pending"; fi
+echo 75 >"$tmp/status"
+status=0
+run_migration >/dev/null 2>&1 || status=$?
+[[ $status == 75 ]] || fail "a deferred platform migration exits 75 for omarchy-migrate" "status $status"
 echo 0 >"$tmp/status"
-pass "a platform migration runs through the dispatcher as root, and its refusal keeps the migration pending"
+pass "a platform migration runs through the dispatcher as root, and its refusal or deferral keeps the migration pending"
 
 : >"$tmp/undetermined"
 if run_migration >/dev/null 2>&1; then fail "an undetermined platform leaves the migration pending"; fi
