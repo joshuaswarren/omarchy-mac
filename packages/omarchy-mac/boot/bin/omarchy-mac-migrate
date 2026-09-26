@@ -1,7 +1,7 @@
 #!/bin/bash -p
 
 # omarchy:summary=Move this Mac onto its target package set through a journaled, resumable transition
-# omarchy:args=status | run [--target FILE] | verify
+# omarchy:args=[--payload DIR] status | run [--target FILE] | verify
 # omarchy:requires-sudo=true
 # omarchy:hidden=true
 
@@ -15,6 +15,11 @@
 # Root starts over in an empty environment with a fixed PATH and reads only the
 # live system. Unprivileged tests name a fixture root in
 # OMARCHY_MAC_MIGRATE_ROOT, where the package is staged.
+#
+# --payload DIR runs the engine, its adapters and its helper commands from DIR,
+# a package unpacked by omarchy-mac-migrate-bootstrap on a Mac that does not
+# have it installed yet. DIR and everything in it must be root's and writable
+# by no one else, and every directory above it too.
 
 if (( EUID == 0 )) && [[ ${1:-} != "--clean-environment" ]]; then
   exec /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin HOME=/root /bin/bash -p -- "${BASH_SOURCE[0]}" --clean-environment "$@"
@@ -23,7 +28,28 @@ fi
 
 set -euo pipefail
 
-# shellcheck disable=SC2034 # R, fixture and boot_lib are the engine's inputs
+# An unpacked package (.PKGINFO beside usr/): every directory from / down to it
+# and every file in it root's (in a fixture, the caller's; ancestors are not
+# checked there) and not writable by group or others. Prints its version.
+payload_check() {
+  local dir=$1 path owner mode version
+  [[ $dir == /?* && -d $dir && ! -L $dir && -f $dir/.PKGINFO && -f $dir/usr/lib/omarchy-mac/boot/migrate-engine.sh ]] || return 1
+  path=$dir
+  while [[ -n $path ]]; do
+    [[ ! -L $path ]] || return 1
+    read -r owner mode < <(stat -c '%u %a' -- "$path") || return 1
+    (( owner == EUID && (8#$mode & 8#022) == 0 )) || return 1
+    (( EUID == 0 )) || break
+    path=${path%/*}
+  done
+  [[ -z $(find "$dir" ! -type l \( ! -uid "$EUID" -o -perm /022 \) -print -quit) ]] || return 1
+  [[ ! -L $dir/usr/bin/omarchy-mac-migrate && ! -L $dir/usr/lib/omarchy-mac/boot ]] || return 1
+  version=$(sed -n 's/^pkgver = //p' "$dir/.PKGINFO")
+  [[ -n $version && $(sed -n 's/^pkgname = //p' "$dir/.PKGINFO") == "omarchy-mac-boot" ]] || return 1
+  printf '%s\n' "$version"
+}
+
+# shellcheck disable=SC2034 # R, fixture, boot_lib and payload_version are the engine's inputs
 if (( EUID == 0 )); then
   export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin
   R=""
@@ -37,7 +63,24 @@ else
   R=${R%/}
   fixture=1
 fi
-boot_lib=$R/usr/lib/omarchy-mac/boot
+payload="" payload_version=""
+if [[ ${1:-} == "--payload" ]]; then
+  payload=${2:-}
+  shift 2 || true
+  if ! payload_version=$(payload_check "$payload"); then
+    echo "omarchy-mac-migrate: refusing the payload ${payload:-(none)}: it must be an unpacked omarchy-mac-boot owned by root and writable only by root" >&2
+    exit 1
+  fi
+  boot_lib=$payload/usr/lib/omarchy-mac/boot
+  # A fixture's stand-ins stay ahead of the payload's commands.
+  if (( fixture )); then
+    PATH=$PATH:$payload/usr/bin
+  else
+    PATH=$payload/usr/bin:$PATH
+  fi
+else
+  boot_lib=$R/usr/lib/omarchy-mac/boot
+fi
 
 source "$boot_lib/migrate-engine.sh"
 source "$boot_lib/migrate-tester.sh"
