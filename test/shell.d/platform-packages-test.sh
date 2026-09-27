@@ -62,7 +62,7 @@ done
 pass "each platform composes base, architecture and platform lists, and only Apple Silicon names Apple packages"
 
 # The Apple list goes by its platform's name, as upstream names it. Its older
-# name stays a link for image builders that still read it.
+# name stays a link to it for anything on an installed system that still reads it.
 [[ -f $ROOT/install/omarchy-apple-silicon.packages && ! -L $ROOT/install/omarchy-apple-silicon.packages ]] ||
   fail "the Apple list is install/omarchy-apple-silicon.packages"
 [[ -L $ROOT/install/omarchy-apple.packages &&
