@@ -82,3 +82,9 @@ if [[ -z $root && -d /run/systemd/system ]]; then
     systemctl start "$safety" || echo "Warning: speakersafetyd did not start; the speakers stay muted." >&2
   fi
 fi
+
+# The launchers are the live machine's (its binaries and /usr/local/bin), so a
+# staging root skips them. Last, so a failure here leaves the rest done.
+if [[ -z $root ]]; then
+  "$root/usr/lib/omarchy-mac/electron-launchers"
+fi
