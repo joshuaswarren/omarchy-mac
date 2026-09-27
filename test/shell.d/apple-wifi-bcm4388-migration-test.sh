@@ -38,35 +38,25 @@ echo "sudo $*" >>"$CALLS"
 "$@"
 SH
 
-cat >"$stub_bin/pacman" <<'SH'
+# The dispatcher resolves omarchy-mac's system setup while the add-on is installed.
+cat >"$stub_bin/omarchy-lifecycle-dispatch" <<'SH'
 #!/bin/bash
-echo "pacman $*" >>"$CALLS"
-if [[ $1 == "-Q" ]]; then
-  [[ -e $INSTALLED ]]
-else
-  touch "$INSTALLED"
+if [[ $1 == "--resolve" ]]; then
+  [[ ! -e $INSTALLED ]] || echo "/usr/lib/omarchy/mac/$2"
+  exit 0
 fi
-SH
-
-cat >"$stub_bin/omarchy-mac-setup-system" <<'SH'
-#!/bin/bash
-echo "omarchy-mac-setup-system" >>"$CALLS"
+echo "omarchy-lifecycle-dispatch $*" >>"$CALLS"
 exit "${SETUP_STATUS:-0}"
 SH
 
-cat >"$stub_bin/omarchy-mac-setup-user" <<'SH'
-#!/bin/bash
-echo "omarchy-mac-setup-user" >>"$CALLS"
-SH
-
-# The installed add-on's chipset gate: an add-on older than this change answers no.
+# The installed add-on's chipset gate: an add-on older than this change answers
+# no, and without the add-on there is none.
 cat >"$stub_bin/wifi-supported" <<'SH'
 #!/bin/bash
-[[ ${ADDON_COVERS_4434:-1} == "1" ]]
+[[ -e $INSTALLED && ${ADDON_COVERS_4434:-1} == "1" ]]
 SH
 
 chmod +x "$stub_bin"/*
-ln -s "$ROOT/bin/omarchy-setup-mac" "$stub_bin/omarchy-setup-mac"
 
 source_migration="$ROOT/migrations/1790327076.sh"
 [[ $(stat -c %a "$source_migration") == "644" ]] || fail "the migration is sourced, not executed" "$(stat -c %a "$source_migration")"
@@ -99,16 +89,16 @@ done
 pass "a detector or lspci failure keeps the migration pending"
 
 run_migration >/dev/null
-grep -Fxq 'sudo omarchy-mac-setup-system' "$calls" || fail "a BCM4388 Mac runs system setup" "$(cat "$calls")"
-! grep -Fq 'omarchy-mac-setup-user' "$calls" || fail "the migration leaves user setup alone" "$(cat "$calls")"
-! grep -Fq 'pacman -S' "$calls" || fail "an installed add-on is not reinstalled" "$(cat "$calls")"
+grep -Fxq 'sudo omarchy-lifecycle-dispatch setup-system' "$calls" || fail "a BCM4388 Mac runs omarchy-mac's system setup" "$(cat "$calls")"
+! grep -Fq 'setup-user' "$calls" || fail "the migration leaves user setup alone" "$(cat "$calls")"
 pass "a BCM4388 Mac with the add-on runs system setup only"
 
 rm "$installed"
-run_migration >/dev/null
-grep -Fq 'pacman -S --needed --noconfirm omarchy-mac' "$calls" || fail "a missing add-on comes from the sync repository" "$(cat "$calls")"
-grep -Fxq 'sudo omarchy-mac-setup-system' "$calls" || fail "setup follows the install" "$(cat "$calls")"
-pass "a BCM4388 Mac without the add-on installs it before setup"
+status=0
+run_migration >/dev/null 2>&1 || status=$?
+(( status != 0 )) && ! grep -q 'sudo' "$calls" || fail "without the add-on the migration stays pending, asking for no root" "$(cat "$calls")"
+touch "$installed"
+pass "a BCM4388 Mac without the add-on stays pending until migration 1789780917 installs it"
 
 status=0
 SETUP_STATUS=43 run_migration >/dev/null 2>&1 || status=$?

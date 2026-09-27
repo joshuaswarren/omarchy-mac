@@ -408,7 +408,7 @@ pass "hardware setup starts only with the platform guard resident"
 # setup leaves run before hardware setup, and the leaf is hardware setup's first.
 mapfile -t system_leaves < <(sed -n 's|^run_logged "\$OMARCHY_INSTALL/\(.*\)"$|\1|p' "$ROOT/install/config/all.sh")
 (( ${#system_leaves[@]} > 0 )) || fail "system setup leaves are listed"
-installers='omarchy-pkg-(add|install|aur-add|aur-install)|pacman[^|;&]*[[:space:]](-[[:alpha:]]*[SU][[:alpha:]]*|--sync|--upgrade)([[:space:]]|$)|omarchy-setup-mac'
+installers='omarchy-pkg-(add|install|aur-add|aur-install)|pacman[^|;&]*[[:space:]](-[[:alpha:]]*[SU][[:alpha:]]*|--sync|--upgrade)([[:space:]]|$)'
 for system_leaf in "${system_leaves[@]}"; do
   ! grep -Eq "$installers" "$ROOT/install/$system_leaf" || fail "system setup installs no packages before hardware setup" "$system_leaf"
 done

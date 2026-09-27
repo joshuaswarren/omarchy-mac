@@ -33,7 +33,8 @@ link_widevine_cdm() {
 copy_chromium_flags() {
   mkdir -p ~/.config
   cp -f "$OMARCHY_PATH/config/chromium-flags.conf" "$1"
-  source "$OMARCHY_PATH/install/user/hardware/apple/browser-video-decode.sh"
+  # A platform's user setup may adjust the fresh flags file.
+  omarchy-lifecycle-dispatch setup-user
   omarchy-install-chromium-copy-url
   omarchy-install-chromium-ytdlp
 }

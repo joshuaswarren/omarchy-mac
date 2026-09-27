@@ -15,16 +15,15 @@ omarchy_path="$test_tmp/omarchy"
 opt_path="$test_tmp/opt"
 cdm="$opt_path/WidevineCdm/chromium"
 calls="$test_tmp/calls.log"
-mkdir -p "$stub_bin" "$test_tmp/home" "$omarchy_path/install/helpers" "$omarchy_path/install/user/hardware/apple" "$omarchy_path/config"
+mkdir -p "$stub_bin" "$test_tmp/home" "$omarchy_path/install/helpers" "$omarchy_path/config"
 
 # The real policy helper writes under /etc without sudo when run as root, so
-# stand it and the Apple decode flag in; this test covers only the CDM link. Its
+# stand it and the platform's user setup in; this test covers only the CDM link. Its
 # as_root goes through the sudo stub, which logs every link, whatever the test's EUID.
 printf 'browser_policy_setup_dir() { :; }\nas_root() { sudo "$@"; }\n' >"$omarchy_path/install/helpers/browser-policy.sh"
-: >"$omarchy_path/install/user/hardware/apple/browser-video-decode.sh"
 cp "$ROOT/config/chromium-flags.conf" "$omarchy_path/config/"
 
-for command in omarchy-pkg-add omarchy-pkg-aur-add omarchy-install-chromium-copy-url omarchy-install-chromium-ytdlp omarchy-theme-set-browser; do
+for command in omarchy-pkg-add omarchy-pkg-aur-add omarchy-lifecycle-dispatch omarchy-install-chromium-copy-url omarchy-install-chromium-ytdlp omarchy-theme-set-browser; do
   printf '#!/bin/bash\nexit 0\n' >"$stub_bin/$command"
 done
 cat >"$stub_bin/sudo" <<'SH'
