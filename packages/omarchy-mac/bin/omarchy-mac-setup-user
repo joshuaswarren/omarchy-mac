@@ -59,14 +59,20 @@ fi
 # decode in software while mpv, ffmpeg and GStreamer keep the decoder. A
 # second --disable-features would replace the first, so the feature joins an
 # existing list. Runs again after a browser install writes a fresh flags file.
-for flags in "$config"/{chromium,chrome,microsoft-edge-stable,brave,brave-origin}-flags.conf; do
-  [[ -f $flags ]] || continue
-  if grep -q -- '^--disable-features=' "$flags"; then
-    sed -i -E '/^--disable-features=/{/[=,]AcceleratedVideoDecoder([,[:space:]]|$)/!s/^(--disable-features=[^[:space:]]*)/\1,AcceleratedVideoDecoder/;s/^--disable-features=,/--disable-features=/}' "$flags"
-  else
-    [[ -z $(tail -c1 "$flags") ]] || echo >>"$flags"
-    echo '--disable-features=AcceleratedVideoDecoder' >>"$flags"
-  fi
+# Browser installs write the flags in ~/.config; Chromium reads them from
+# XDG_CONFIG_HOME, which may be another directory.
+flag_dirs=("$config")
+[[ $config == "$HOME/.config" ]] || flag_dirs+=("$HOME/.config")
+for flags_dir in "${flag_dirs[@]}"; do
+  for flags in "$flags_dir"/{chromium,chrome,microsoft-edge-stable,brave,brave-origin}-flags.conf; do
+    [[ -f $flags ]] || continue
+    if grep -q -- '^--disable-features=' "$flags"; then
+      sed -i -E '/^--disable-features=/{/[=,]AcceleratedVideoDecoder([,[:space:]]|$)/!s/^(--disable-features=[^[:space:]]*)/\1,AcceleratedVideoDecoder/;s/^--disable-features=,/--disable-features=/}' "$flags"
+    else
+      [[ -z $(tail -c1 "$flags") ]] || echo >>"$flags"
+      echo '--disable-features=AcceleratedVideoDecoder' >>"$flags"
+    fi
+  done
 done
 
 # A matching user copy hides future vendor updates. Modified files and links stay.
