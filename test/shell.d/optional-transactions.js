@@ -12,7 +12,10 @@ const overrides = {
   'install.terminal.alacritty': ['alacritty'],
   'install.terminal.foot': ['foot'],
   'install.terminal.ghostty': ['ghostty'],
-  'install.terminal.kitty': ['kitty']
+  'install.terminal.kitty': ['kitty'],
+  // On Apple Silicon the Steam install's platform setup adds its FEX launcher,
+  // which the menu row therefore needs too.
+  'install.gaming.steam': platform => platform.apple === '1' ? ['steam', 'omarchy-steam-fex'] : null
 }
 
 // Rows that build from the AUR instead of the sync database.
@@ -145,7 +148,8 @@ function scriptTransaction(command, selector, platform) {
 }
 
 function deriveTransaction(item, platform) {
-  if (overrides[item.id]) return overrides[item.id]
+  const override = typeof overrides[item.id] === 'function' ? overrides[item.id](platform) : overrides[item.id]
+  if (override) return override
   const action = item.action || ''
 
   // The packages sit in the action itself, right after the display name.

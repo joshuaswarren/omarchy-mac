@@ -83,8 +83,9 @@ if [[ -z $root && -d /run/systemd/system ]]; then
   fi
 fi
 
-# The launchers are the live machine's (its binaries and /usr/local/bin), so a
-# staging root skips them. Last, so a failure here leaves the rest done.
+# The Electron launchers and Steam's FEX launcher are the live machine's, so a
+# staging root skips them. Last, so a failure here leaves the services done.
 if [[ -z $root ]]; then
   "$root/usr/lib/omarchy-mac/electron-launchers"
+  "$root/usr/lib/omarchy-mac/steam-launcher"
 fi

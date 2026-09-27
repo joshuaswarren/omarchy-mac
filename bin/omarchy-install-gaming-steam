@@ -6,16 +6,17 @@
 set -e
 
 echo "Installing Steam..."
-if omarchy-hw-apple-silicon; then
-  omarchy-pkg-add steam omarchy-steam-fex
-else
-  omarchy-pkg-add steam
-fi
+omarchy-pkg-add steam
 omarchy-install-gaming-gpu-lib32
 
-if omarchy-hw-apple-silicon; then
-  omarchy-launch-steam --prepare
+# A platform's setup adds what Steam needs there (on Apple Silicon, the FEX
+# launcher and its desktop entry). The resolve is an assignment so an
+# undetermined platform stops the install instead of skipping it.
+entrypoint=$(omarchy-lifecycle-dispatch --resolve setup-system)
+if [[ -n $entrypoint ]]; then
+  sudo omarchy-lifecycle-dispatch setup-system
 fi
+omarchy-lifecycle-dispatch setup-user
 
 echo ""
 echo "Steam will start automatically now. This might take a while..."

@@ -126,8 +126,14 @@ setup_microphone() {
 
 setup_microphone
 
-# Desktop entries for the Electron wrappers are the live machine's, so a
-# staging root skips them. Last, so a failure here leaves the rest done.
+# Desktop entries for Steam and the Electron wrappers are the live machine's,
+# so a staging root skips them. Last, so a failure here leaves the cursor,
+# trackpad, browser flags and microphone done.
 if [[ -z $root ]]; then
+  # Steam runs x86 under FEX in a muvm VM; its launcher writes the user's
+  # desktop entry for itself and patches Steam's UI for it.
+  if command -v omarchy-launch-steam >/dev/null && { pacman -Q steam >/dev/null 2>&1 || [[ -d $HOME/.local/share/Steam ]]; }; then
+    omarchy-launch-steam --prepare
+  fi
   "$root/usr/lib/omarchy-mac/electron-desktop-entries"
 fi
