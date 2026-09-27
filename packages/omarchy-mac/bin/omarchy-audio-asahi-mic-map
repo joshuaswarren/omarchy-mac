@@ -23,6 +23,9 @@ import uuid
 SINK = 'omarchy_asahi_mic'
 MONITOR = SINK + '.monitor'
 OWNER = 'omarchy.asahi-mic.owner'
+DSP = re.compile(r'effect_output\.j[0-9]+-mic')
+OUTAGE_GRACE = 10.0
+outage = dict(since=None, notified=False)
 
 
 class Deferred(Exception):
@@ -45,11 +48,13 @@ class Audio:
     def modules(self):
         # PipeWire's pactl JSON module rows omit the numeric index. The short
         # format retains the load-module identity needed for scoped rollback.
+        # A multi-line module argument (module-rt from asahi-audio's PipeWire
+        # config) continues on lines without an index; they are not modules.
         result = []
         for line in self.run('pactl', 'list', 'short', 'modules').splitlines():
             fields = line.split('\t')
             if len(fields) < 3 or not fields[0].isdecimal():
-                raise ValueError('Invalid PulseAudio module identity')
+                continue
             result.append(dict(index=fields[0], name=fields[1], argument=fields[2]))
         return result
 
@@ -61,6 +66,13 @@ class Audio:
 
     def pause(self):
         time.sleep(0.1)
+
+    def notify(self, headline, body, *command):
+        try:
+            subprocess.Popen(['omarchy-notification-send', '-g', '\U000f036d', '-u', 'normal', headline, body, '--exec', *command],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        except OSError:
+            pass
 
     def signal(self, source, timeout=3.0):
         # A linked monitor can still carry only digital silence (exact zeros);
@@ -178,6 +190,74 @@ def rank_playback_sinks(sinks):
     return [sink['name'] for sink in candidates]
 
 
+def port_usable(device):
+    ports = device.get('ports') or []
+    active = device.get('active_port')
+    return not any(port.get('name') == active and port.get('availability') == 'not available' for port in ports)
+
+
+def real_inputs(sources):
+    # A monitor only repeats a sink, and asahi-audio's raw array (RawMics) is
+    # uncalibrated: neither is a microphone the session should default to.
+    # WirePlumber ignores a default whose port is unplugged.
+    def monitor(source):
+        return (source['name'].endswith('.monitor') or source.get('monitor_source')
+                or (source.get('properties') or {}).get('device.class') == 'monitor')
+    candidates = [source for source in sources if source.get('name') and not monitor(source)
+                  and not source['name'].endswith('.RawMics') and port_usable(source)]
+    candidates.sort(key=lambda source: (-session_priority(source), source['name']))
+    return [source['name'] for source in candidates]
+
+
+def fallback_path(state):
+    return state.with_suffix('.fallback')
+
+
+def claim(state):
+    path = fallback_path(state)
+    return path.read_text() if path.exists() else None
+
+
+def leave_mapping(audio, state, sources, original_input, original_output):
+    # The array's DSP is gone (#99: WirePlumber left its filter half-built), so
+    # the mapping carries silence. Its sink must not stay the default output,
+    # nor its monitor the default input. WirePlumber would fall back to another
+    # monitor, so hand capture to a plugged-in real input, and claim that
+    # choice so the mapping is selected again when the array returns. Choosing
+    # another real input ends the claim; losing the claimed one (unplugged)
+    # hands over again. A muted mapping is the user's mute: never hand it to
+    # an unmuted microphone.
+    claimed = claim(state)
+    inputs = real_inputs(sources)
+    if claimed and original_input != claimed and original_input in inputs:
+        fallback_path(state).unlink()
+        claimed = None
+    if original_output == SINK:
+        restore_output(audio, None)
+    if original_input == MONITOR:
+        eligible = all(any(obj['name'] == name and audible(obj) for obj in objects)
+                       for objects, name in ((audio.objects('sinks'), SINK), (sources, MONITOR)))
+    else:
+        eligible = claimed is not None and original_input not in inputs
+    if eligible and inputs and audio.run('pactl', 'get-default-source') == original_input:
+        audio.run('pactl', 'set-default-source', inputs[0])
+        if audio.run('pactl', 'get-default-source') == inputs[0]:
+            path = fallback_path(state)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(inputs[0])
+
+
+def outage_due():
+    # Seconds until a pending lost-array notice is due, for the watcher's wait.
+    if outage['since'] is None or outage['notified']:
+        return None
+    return max(0.1, outage['since'] + OUTAGE_GRACE - time.monotonic())
+
+
+def find_dsp(sources):
+    return next((obj['name'] for obj in sources if DSP.fullmatch(obj['name'])), None)
+
+
 def restore_output(audio, previous):
     # The mapping sink is a stereo capture target, not a speaker. WirePlumber
     # still promotes a newly loaded null sink (and will persist that choice
@@ -206,9 +286,31 @@ def reconcile(audio, state, save_only=False, checked=None):
     sources = audio.objects('sources')
     original_input = audio.run('pactl', 'get-default-source')
     original_output = audio.run('pactl', 'get-default-sink')
-    dsp = next((obj['name'] for obj in sources if re.fullmatch(r'effect_output\.j[0-9]+-mic', obj['name'])), None)
+    dsp = find_dsp(sources)
     if not dsp:
+        mapped = any(obj['name'] == MONITOR for obj in sources)
+        if mapped or original_output == SINK or claim(state):
+            leave_mapping(audio, state, sources, original_input, original_output)
+        if mapped:
+            # A card or audio restart rebuilds the array within seconds; only a
+            # lasting loss is worth telling the user about, once.
+            if outage['since'] is None:
+                outage['since'] = time.monotonic()
+            elif not outage['notified'] and time.monotonic() - outage['since'] >= OUTAGE_GRACE:
+                outage['notified'] = True
+                audio.notify('Built-in microphone unavailable', 'Click to restart audio', 'omarchy-restart-audio')
+        else:
+            outage.update(since=None, notified=False)
         raise Deferred('No Asahi DSP microphone is present; user service will retry if an array appears')
+    outage.update(since=None, notified=False)
+    fallback = fallback_path(state)
+    claimed = claim(state)
+    # A muted fallback keeps its claim: the array never unmutes capture. The
+    # unmute itself is not watched; the next device event (or the backstop)
+    # restores the array, and the fallback is a working input meanwhile. A
+    # claimed fallback that went away (default fell to a monitor) returns too.
+    muted_claim = claimed == original_input and any(obj['name'] == original_input and obj.get('mute') is not False for obj in sources)
+    returning = claimed is not None and not muted_claim and (claimed == original_input or original_input not in real_inputs(sources))
     sinks = audio.objects('sinks')
     owner = uuid.uuid4().hex
     module = None
@@ -266,7 +368,7 @@ def reconcile(audio, state, save_only=False, checked=None):
             raise RuntimeError('Asahi microphone stereo links did not become ready')
         restore_output(audio, original_output)
         current_input = audio.run('pactl', 'get-default-source')
-        select_monitor = original_input in ('', dsp) and current_input == original_input
+        select_monitor = (original_input in ('', dsp) or returning) and current_input == original_input
         # Only a monitor that carries the microphone may be the default input: a
         # linked one can still carry digital silence (#505). A muted mapping is
         # the user's microphone mute (the mute key mutes the sink side while the
@@ -296,6 +398,10 @@ def reconcile(audio, state, save_only=False, checked=None):
                 audio.run('pactl', 'set-default-source', MONITOR)
             elif current_input == MONITOR and sampled is False and mapping_audible():
                 audio.run('pactl', 'set-default-source', dsp)
+        # Keep the claim only while the fallback is still the default and the
+        # returning mapping could not be confirmed live yet.
+        if not muted_claim and not (select_monitor and returning and sampled is not True):
+            fallback.unlink(missing_ok=True)
         if sampled is None:
             problem = 'Could not sample the Asahi microphone stereo mapping; the default input is unchanged'
         elif sampled is False:
@@ -402,16 +508,17 @@ class Subscription:
         *complete, self.buffer = self.buffer.split(b'\n')
         return complete
 
-    def wait(self):
+    def wait(self, limit=None):
         if self.process is None and not self.start():
             time.sleep(self.retry)
             return
+        backstop = self.backstop if limit is None else min(self.backstop, limit)
         started = time.monotonic()
         due = None
         latest = None
         while True:
             now = time.monotonic()
-            deadline = started + self.backstop if due is None else min(due, latest)
+            deadline = started + backstop if due is None else min(due, latest)
             if deadline <= now:
                 return
             ready, _, _ = select.select([self.process.stdout], [], [], deadline - now)
@@ -434,7 +541,7 @@ class Subscription:
 def supervise(operation, wait=None):
     subscription = Subscription() if wait is None else None
     if subscription is not None:
-        wait = subscription.wait
+        wait = lambda: subscription.wait(outage_due())
     previous_error = None
     try:
         while True:
