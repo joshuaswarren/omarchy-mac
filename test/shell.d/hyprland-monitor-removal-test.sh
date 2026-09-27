@@ -86,11 +86,13 @@ local function turn_ends()
   end
 end
 
--- Unplug USB-2 the way Hyprland does; eDP-1 is first in its monitor list.
+-- Unplug USB-2 the way Hyprland does: the warp goes to eDP-1, first in its
+-- monitor list, wherever focus was.
 local function unplug(opts)
   opts = opts or {}
-  if focused == "USB-2" then
-    focus_moves("eDP-1", opts.assign_first)
+  local was_on_it = focused == "USB-2"
+  focus_moves("eDP-1", opts.assign_first)
+  if was_on_it then
     -- Moving the active workspace off leaves the dying monitor a placeholder.
     handlers["workspace.active"]({ id = 2, name = "2" })
   end
@@ -133,6 +135,13 @@ reset()
 focus_moves("USB-2"); turn_ends()
 unplug({ then_switch = 9 })
 assert(#dispatched == 0, "a workspace switch after the removal wins over the restore")
+
+reset()
+monitors["HDMI-A-1"] = { name = "HDMI-A-1", active = { id = 7, name = "7" } }
+workspaces["7"] = true
+focus_moves("HDMI-A-1"); turn_ends()
+unplug()
+assert(#dispatched == 1 and dispatched[1] == "7", "unplugging another display leaves focus on the third one")
 
 reset()
 workspaces["5"] = nil
