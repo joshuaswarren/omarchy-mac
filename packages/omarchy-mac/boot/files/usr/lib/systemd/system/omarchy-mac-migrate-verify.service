@@ -1,6 +1,9 @@
 [Unit]
 Description=Finish the Omarchy Mac migration after its reboot
-ConditionPathExists=/var/lib/omarchy-mac/migration/reboot-pending
+# Either condition starts it: a migration waiting for its reboot, or user
+# setup a migration left pending, retried at every boot until it succeeds.
+ConditionPathExists=|/var/lib/omarchy-mac/migration/reboot-pending
+ConditionPathExists=|/var/lib/omarchy-mac/migration/user-pending
 After=local-fs.target
 
 [Service]
