@@ -318,6 +318,8 @@ print('ok - system seams read /proc, logind and the lock state safely')
 unit = (root / 'vendor/systemd/user/omarchy-audio-watchdog.service').read_text()
 assert 'ExecStart=/usr/bin/omarchy-audio-watchdog --watch' in unit and 'PartOf=graphical-session.target' in unit
 assert 'Wants=' not in unit and 'Requires=' not in unit, 'the watchdog never starts audio by itself'
+assert any(line.startswith('After=') and 'graphical-session.target' in line.split('=', 1)[1].split() for line in unit.splitlines()), \
+    'the watchdog starts once the session environment is in the user manager'
 link = root / 'vendor/systemd/user/graphical-session.target.wants/omarchy-audio-watchdog.service'
 assert link.is_symlink() and os.readlink(link) == '../omarchy-audio-watchdog.service'
 with tempfile.TemporaryDirectory() as staged:
