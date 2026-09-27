@@ -99,8 +99,4 @@ grep -F 'switch:on:Lid Switch' "$bindings" >/dev/null ||
   fail "lid-close still binds the generic lid switch"
 grep -F 'switch:off:Lid Switch' "$bindings" >/dev/null ||
   fail "clamshell still binds the generic lid switch"
-grep -F 'switch:on:Apple SMC power/lid events' "$bindings" >/dev/null ||
-  fail "lid-close also binds the Apple SMC lid switch"
-grep -F 'switch:off:Apple SMC power/lid events' "$bindings" >/dev/null ||
-  fail "clamshell also binds the Apple SMC lid switch"
-pass "Hyprland binds both the generic and Apple SMC lid switches"
+pass "Hyprland binds the generic lid switch (omarchy-mac binds the Apple SMC one; see apple-platform-hooks-test.sh)"

@@ -208,74 +208,79 @@ function nearestDropTarget(candidates, point, vertical) {
   return best
 }
 
-// Camera-cutout depths measured on real hardware, keyed by physical panel
-// size. Apple's notched panels expose more rows above the 16:10 area than
-// the cutout actually covers (Apple's own menu bar extends below the notch
-// too), so a measured panel gets its exact cutout and an unmeasured panel
-// keeps the full strip — which errs taller, never shorter.
-var measuredNotchPanels = [
-  // MacBook Pro 14" (3024x1964): 64 of the 74 rows above the 16:10 area.
-  { width: 3024, height: 1964, cutoutRows: 64 },
-  // MacBook Pro 16" (3456x2234): inferred from the 14" — same 254ppi panel
-  // family and camera module, so the cutout spans the same 64 rows.
-  { width: 3456, height: 2234, cutoutRows: 64 },
-  // MacBook Air 13.6" and 15" (224ppi): the cutout is physically the same
-  // size as the Pros', so it spans fewer rows there (64 x 224/254 ~= 56).
-  { width: 2560, height: 1664, cutoutRows: 56 },
-  { width: 2880, height: 1864, cutoutRows: 56 }
-]
+// Display cutouts (a camera notch at the top of a laptop panel) are described
+// by the platform's own package, in default/shell/platform/display-cutouts.json
+// under the packaged tree:
+//
+//   { "panels": [ { "connector": "eDP", "width": 3024, "height": 1964, "top": 64 } ] }
+//
+// A panel matches a screen whose connector name starts with `connector` and
+// whose mode is width x height physical pixels; `top` is how many physical rows
+// at its top the cutout covers. Anything malformed is dropped.
+function parseCutouts(text) {
+  var parsed
+  try {
+    parsed = JSON.parse(String(text || ""))
+  } catch (error) {
+    return []
+  }
+  var panels = parsed && Array.isArray(parsed.panels) ? parsed.panels : []
+  var cutouts = []
+  for (var i = 0; i < panels.length; i++) {
+    var panel = panels[i] || {}
+    var width = Number(panel.width)
+    var height = Number(panel.height)
+    var top = Number(panel.top)
+    if (typeof panel.connector !== "string" || panel.connector === "") continue
+    if (!(width > 0) || !(height > 0) || !(top > 0) || top >= height) continue
+    cutouts.push({ connector: panel.connector, width: width, height: height, top: top })
+  }
+  return cutouts
+}
 
-function measuredCutoutRows(physicalWidth, physicalHeight) {
-  for (var i = 0; i < measuredNotchPanels.length; i++) {
-    var panel = measuredNotchPanels[i]
-    // Logical sizes are rounded, so the reconstructed physical size can be
-    // a couple of pixels off at fractional scales.
-    if (Math.abs(physicalWidth - panel.width) <= 4 && Math.abs(physicalHeight - panel.height) <= 4)
-      return panel.cutoutRows
+// The cutout at the top of this screen, in logical pixels, or 0. Logical sizes
+// are rounded, so the reconstructed mode can be a couple of pixels off at
+// fractional scales.
+function cutoutTop(cutouts, screenName, logicalWidth, logicalHeight, devicePixelRatio) {
+  var name = String(screenName || "")
+  var scale = Number(devicePixelRatio) > 0 ? Number(devicePixelRatio) : 1
+  var width = Math.round(Number(logicalWidth) * scale)
+  var height = Math.round(Number(logicalHeight) * scale)
+  if (!(width > 0) || !(height > 0)) return 0
+  var list = Array.isArray(cutouts) ? cutouts : []
+  for (var i = 0; i < list.length; i++) {
+    var panel = list[i]
+    if (name.indexOf(panel.connector) !== 0) continue
+    if (Math.abs(width - panel.width) <= 4 && Math.abs(height - panel.height) <= 4)
+      return Math.ceil(panel.top / scale)
   }
   return 0
 }
 
-// Apple's notched laptop panels are a 16:10 display plus a camera strip above
-// it, so whatever extends beyond the 16:10 area is the notch strip. Hyprland
-// applies the display scale to both axes, so the scale cancels out and the
-// strip height falls straight out of the logical screen size.
-//
-// Callers gate on the machine being Apple Silicon; this only guards against
-// panels the formula does not describe: external monitors (not eDP), 16:10
-// or wider panels (no leftover), and taller aspect ratios (rotated or 3:2
-// panels), where the leftover is far more than a camera strip. Every notched
-// Apple panel's strip is ~3.8% of its height, so 5% is a comfortable bound.
-function notchHeight(screenName, logicalWidth, logicalHeight, devicePixelRatio) {
-  if (String(screenName || "").indexOf("eDP") !== 0) return 0
-
-  var width = Number(logicalWidth)
-  var height = Number(logicalHeight)
-  if (!(width > 0) || !(height > 0)) return 0
-
-  var strip = height - (width * 10) / 16
-  if (strip <= 0 || strip > height / 20) return 0
-
-  var scale = Number(devicePixelRatio)
-  if (scale > 0) {
-    var cutout = measuredCutoutRows(Math.round(width * scale), Math.round(height * scale))
-    if (cutout > 0) return Math.ceil(cutout / scale)
-  }
-  return Math.ceil(strip)
+// The height a top bar on this screen must reach to cover its cutout, or a
+// calibrated [bar] notch-height in its place. A screen without a cutout, or a
+// bar on another edge, has no floor, so a calibration never reaches an
+// external monitor.
+function notchFloor(cutouts, position, screenName, logicalWidth, logicalHeight, devicePixelRatio, calibrated) {
+  if (position !== "top") return 0
+  var top = cutoutTop(cutouts, screenName, logicalWidth, logicalHeight, devicePixelRatio)
+  if (!(top > 0)) return 0
+  return Number(calibrated) > 0 ? Math.round(Number(calibrated)) : top
 }
 
-// The camera cutout covers the middle of a top bar on an Apple notched panel,
-// so that bar draws its center section beside the right one, as macOS does.
-function centerBesideRight(appleSiliconHost, position, screenName, logicalWidth, logicalHeight, devicePixelRatio) {
-  return appleSiliconHost === true && position === "top" &&
-    notchHeight(screenName, logicalWidth, logicalHeight, devicePixelRatio) > 0
+// A cutout covers the middle of a top bar, so that bar draws its center
+// section beside the right one.
+function centerBesideRight(cutouts, position, screenName, logicalWidth, logicalHeight, devicePixelRatio) {
+  return position === "top" && cutoutTop(cutouts, screenName, logicalWidth, logicalHeight, devicePixelRatio) > 0
 }
 
 if (typeof module !== "undefined") {
   module.exports = {
     centerBesideRight: centerBesideRight,
+    cutoutTop: cutoutTop,
     isDrawnSlot: isDrawnSlot,
-    notchHeight: notchHeight,
+    notchFloor: notchFloor,
+    parseCutouts: parseCutouts,
     pickDrawnSlot: pickDrawnSlot,
     pickPanelSlot: pickPanelSlot,
     nearestDropTarget: nearestDropTarget,

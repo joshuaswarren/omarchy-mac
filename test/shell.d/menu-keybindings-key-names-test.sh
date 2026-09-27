@@ -4,16 +4,16 @@ set -euo pipefail
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
-# The keybindings menu must show Mac physical key names: on Apple Silicon
-# MacBook keyboards XF86MonBrightnessUp/Down ARE F2/F1, so raw symbols leak
-# meaningless rows like "SHIFT + XF86MonBrightnessUp" (issue #194).
-# Regression guard for the cache too: a pre-seeded stale cache file from the
-# v13 era must not win over current rendering (cache key bumped to v14).
+# A platform package names keys the way its keyboards print them. On a MacBook
+# XF86MonBrightnessUp/Down are the F2/F1 keys, so without the names the menu
+# shows rows like "SHIFT + XF86MonBrightnessUp". A cache written before the
+# names were installed must not win over them.
 
 mock_bin=$(mktemp -d)
 cache_dir=$(mktemp -d)
+packaged=$(mktemp -d)
 cleanup() {
-  rm -rf "$mock_bin" "$cache_dir"
+  rm -rf "$mock_bin" "$cache_dir" "$packaged"
 }
 trap cleanup EXIT
 
@@ -49,6 +49,14 @@ bindi
 	dispatcher: exec
 	arg: omarchy-brightness-display +1%
 
+bind
+	modmask: 64
+	key: F5
+	keycode: 0
+	description: Press brightness up
+	dispatcher: exec
+	arg: wtype -k XF86MonBrightnessUp
+
 bindm
 	modmask: 64
 	key: Q
@@ -80,14 +88,11 @@ exit 1
 SH
 chmod +x "$mock_bin/omarchy-cmd-present"
 
-cat >"$mock_bin/omarchy-hw-apple-silicon" <<'SH'
-#!/bin/bash
-exit 0
-SH
-chmod +x "$mock_bin/omarchy-hw-apple-silicon"
+mkdir -p "$packaged/default/omarchy/platform"
+printf '%s\n' 'XF86MonBrightnessUp F2' 'XF86MonBrightnessDown F1' 'not a line' 'Bad-Sym F3' >"$packaged/default/omarchy/platform/key-names"
 
-# Pre-seed the exact cache file that v13 production would read for these
-# mocked inputs. Cached records use the rendered row as field 1, followed by
+# Pre-seed the exact cache file that v13, which knew no key names, would read
+# for these mocked inputs. Cached records use the rendered row as field 1, followed by
 # the dispatcher and argument fields.
 mkdir -p "$cache_dir/omarchy"
 v13_key=$({
@@ -102,9 +107,7 @@ ALT + XF86MonBrightnessUp → Brightness up precise	exec	omarchy-brightness-disp
 SUPER + Q → Close window	killactive
 EOF
 
-# omarchy-mac names the keys (default/omarchy/platform/key-names).
-"$ROOT/packages/omarchy-mac/install" "$cache_dir/pkg" >/dev/null
-output=$(PATH="$mock_bin:$PATH" XDG_CACHE_HOME="$cache_dir" OMARCHY_PACKAGED_PATH="$cache_dir/pkg/usr/share/omarchy" "$ROOT/bin/omarchy-menu-keybindings" --print)
+output=$(OMARCHY_PACKAGED_PATH="$packaged" PATH="$mock_bin:$PATH" XDG_CACHE_HOME="$cache_dir" "$ROOT/bin/omarchy-menu-keybindings" --print)
 
 tr -s ' ' <<<"$output" | grep -qF 'SHIFT + F2 → Keyboard brightness up' || \
   fail "SHIFT + XF86MonBrightnessUp renders as SHIFT + F2 with its description" "$output"
@@ -121,4 +124,18 @@ grep -qF 'XF86MonBrightness' <<<"$output" && \
 tr -s ' ' <<<"$output" | grep -qF 'SUPER + Q → Close window' || \
   fail "unrelated bindings render unchanged (SUPER + Q)" "$output"
 
-pass "keybindings menu shows Mac physical key names (F1/F2), stale caches ignored"
+# The menu runs a chosen row from its cached record, which carries what the
+# binding runs.
+records=$(cat "$cache_dir"/omarchy/keybindings-*.records)
+grep -qF 'wtype -k XF86MonBrightnessUp' <<<"$records" && ! grep -qF 'wtype -k F2' <<<"$records" ||
+  fail "a key name never changes what a binding runs" "$records"
+
+pass "keybindings menu shows a platform's key names (F1/F2), stale caches ignored"
+
+# Without a platform package the keys keep their own names, and a cache made
+# with the names is not reused.
+output=$(PATH="$mock_bin:$PATH" XDG_CACHE_HOME="$cache_dir" "$ROOT/bin/omarchy-menu-keybindings" --print)
+tr -s ' ' <<<"$output" | grep -qF 'SHIFT + XF86MonBrightnessUp → Keyboard brightness up' ||
+  fail "without key names the brightness key keeps its own name" "$output"
+grep -qF 'SHIFT + F2' <<<"$output" && fail "without key names nothing is renamed F2" "$output"
+pass "keybindings menu keeps keysym names without a platform package"

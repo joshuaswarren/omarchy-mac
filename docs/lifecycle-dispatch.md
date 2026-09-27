@@ -152,6 +152,15 @@ The recovery passphrase is core code; whether setup creates one is the platform 
 
 Snapshot restore is not a dispatch operation. A Limine Mac restores through `limine-snapper-restore`, as x86 does: limine-snapper-sync swaps the root and puts the snapshot's saved UKI and menu entry back itself, so nothing is rebuilt afterwards. `omarchy-mac-boot` checks the restore through limine-snapper-sync's own hook interface, the one its Limine activation gate already uses. Its pre hook (`/etc/boot/hooks/pre.d/04-omarchy-mac-snapshot-check`) runs the boot check `update-verify` runs (`--boot-chain`) on the booted snapshot, with no reboot pending, and stops a restore the boot files do not match. Its post hook (`post.d/99-omarchy-mac-snapshot-check`) checks the root the restore put back, which limine-snapper-restore's own list can make a different snapshot, and keeps the reboot from being offered when it does not match. `omarchy-snapshot restore` sends a Mac that still boots GRUB to `omarchy-system-snapshot-restore`, which refuses a Limine Mac and asks `omarchy-mac-snapshot-check` about the chosen snapshot on a GRUB one.
 
+## Platform desktop defaults
+
+A platform's runtime package can also ship Hyprland defaults, without an operation and without a branch in Omarchy's config. Both directories are read from the packaged tree (`/usr/share/omarchy`, which a development checkout in `OMARCHY_PATH` does not replace; `OMARCHY_PACKAGED_PATH` moves it for tests), and Omarchy ships nothing in either.
+
+- **Early: `default/hypr/platform/defaults/*.lua`**, loaded by `default/hypr/omarchy.lua` right after the helpers, before Omarchy's own defaults and the user's files. A chord bound there with `o.bind` replaces Omarchy's default for the same chord (`o.platform_chords`), and a function added to `o.bind_decorators` runs for every later `o.bind`, Omarchy's and the user's, before the bind is made, so it can bind something that has to run first (Hyprland runs a key press's binds in the order they were added). The user's files load after and can unbind or rebind any of it. A file that binds keys honors `omarchy_default_bindings = false`. Settings Omarchy's defaults also set belong in the late directory.
+- **Late: `default/hypr/platform/*.lua`**, loaded by `default/hypr/toggles.lua` after the user's files, for defaults that must see the user's: `o.registered_gestures` lists the gestures registered before it, so a default gesture can step aside for the user's own.
+- **Key names: `default/omarchy/platform/key-names`**, one `<keysym> <name>` per line, which the keybindings menu shows in place of the keysym (a MacBook's `XF86MonBrightnessUp` is its F2 key).
+- **Display cutouts: `default/shell/platform/display-cutouts.json`**, the camera cutouts the bar keeps a top bar out of (see `docs/omarchy-shell.md`).
+
 ## Qualcomm
 
 Snapdragon laptops boot Limine with unified kernel images, like x86, and `qualcomm` is unregistered. Every operation is a no-op there, and provisioning uses the Limine UKI callbacks, so Dragon behaves exactly as before. To plug in a Qualcomm implementation:

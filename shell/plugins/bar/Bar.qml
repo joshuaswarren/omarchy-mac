@@ -555,14 +555,29 @@ Item {
   readonly property bool vertical: position === "left" || position === "right"
   readonly property int barSize: vertical ? Style.bar.sizeVertical : Style.bar.sizeHorizontal
 
-  // Whether this machine is an Apple Silicon laptop, whose built-in panel may
-  // have a camera notch. Invoke the detector by OMARCHY_PATH so a session
-  // whose PATH does not include bin/ still identifies the hardware.
+  // Whether this machine is an Apple Silicon Mac, for the microphone widget,
+  // whose Asahi mapping is a virtual source. Invoke the detector by
+  // OMARCHY_PATH so a session whose PATH does not include bin/ still
+  // identifies the hardware.
   property bool appleSiliconHost: false
   Process {
     running: root.omarchyPath !== ""
     command: [root.omarchyPath + "/bin/omarchy-hw-apple-silicon"]
     onExited: function(exitCode) { root.appleSiliconHost = exitCode === 0 }
+  }
+
+  // Display cutouts (a camera notch) the platform's own package describes in
+  // the packaged tree, which a development checkout in OMARCHY_PATH does not
+  // replace. Most machines have none. See BarModel.parseCutouts.
+  readonly property string packagedPath: Quickshell.env("OMARCHY_PACKAGED_PATH") || "/usr/share/omarchy"
+  property var displayCutouts: []
+  FileView {
+    path: root.packagedPath + "/default/shell/platform/display-cutouts.json"
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.displayCutouts = BarModel.parseCutouts(text())
+    onLoadFailed: root.displayCutouts = []
+    onFileChanged: reload()
   }
 
   function normalizePosition(value) {
@@ -1257,11 +1272,13 @@ Item {
       window: barWindow
     }
 
+    // Parked by its full thickness, which a notch floor may make more than
+    // barSize, so no strip of it stays on screen.
     margins {
-      top: root.barHidden && root.position === "top" ? -root.barSize : 0
-      bottom: root.barHidden && root.position === "bottom" ? -root.barSize : 0
-      left: root.barHidden && root.position === "left" ? -root.barSize : 0
-      right: root.barHidden && root.position === "right" ? -root.barSize : 0
+      top: root.barHidden && root.position === "top" ? -barWindow.thickness : 0
+      bottom: root.barHidden && root.position === "bottom" ? -barWindow.thickness : 0
+      left: root.barHidden && root.position === "left" ? -barWindow.thickness : 0
+      right: root.barHidden && root.position === "right" ? -barWindow.thickness : 0
     }
 
     anchors {
@@ -1271,21 +1288,17 @@ Item {
       right: root.position === "right" || !root.vertical
     }
 
-    // A top bar shorter than the camera cutout of an Apple notched panel
-    // leaves a sliver of every window peeking out beside the camera, so the
-    // cutout height is this panel's minimum sensible top-bar height. An
-    // intentionally taller bar still wins, and a calibrated [bar]
-    // notch-height in shell.toml overrides the derived value.
-    readonly property int notchFloor: root.appleSiliconHost && root.position === "top"
-      ? (Style.bar.notchHeight > 0
-          ? Style.bar.notchHeight
-          : BarModel.notchHeight(screen.name, screen.width, screen.height, screen.devicePixelRatio))
-      : 0
+    // A top bar shorter than a panel's camera cutout leaves a sliver of every
+    // window peeking out beside the camera, so the cutout is this panel's
+    // minimum sensible top-bar height. An intentionally taller bar still wins.
+    readonly property int notchFloor: BarModel.notchFloor(root.displayCutouts, root.position, screen.name, screen.width, screen.height, screen.devicePixelRatio, Style.bar.notchHeight)
 
-    readonly property bool centerBesideRight: BarModel.centerBesideRight(root.appleSiliconHost, root.position, screen.name, screen.width, screen.height, screen.devicePixelRatio)
+    readonly property bool centerBesideRight: BarModel.centerBesideRight(root.displayCutouts, root.position, screen.name, screen.width, screen.height, screen.devicePixelRatio)
 
-    implicitWidth: root.vertical ? root.barSize : 0
-    implicitHeight: root.vertical ? 0 : Math.max(root.barSize, notchFloor)
+    readonly property int thickness: root.vertical ? root.barSize : Math.max(root.barSize, notchFloor)
+
+    implicitWidth: root.vertical ? thickness : 0
+    implicitHeight: root.vertical ? 0 : thickness
     color: root.transparent ? "transparent" : root.background
     surfaceFormat.opaque: false
     WlrLayershell.namespace: "omarchy-bar"
