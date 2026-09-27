@@ -233,6 +233,17 @@ with tempfile.TemporaryDirectory() as temporary:
     except RuntimeError as error: assert 'reach audio_effect.j416-convolver.monitor' in str(error), error
     else: raise AssertionError('a misrouted default must be reported')
     assert audio.default == DSP
+    checked = set(); audio = Audio(); audio.feeds = {'audio_effect.j416-convolver.monitor'}
+    for attempt in range(3):
+        try: m.reconcile(audio, state(), checked=checked)
+        except RuntimeError: pass
+    assert audio.default == DSP and audio.routes == 1, 'a misrouted mapping is not reselected on every event'
+    stalled = [dict(id=1, type='PipeWire:Interface:Node', info={'props': {'node.name': m.MAPPING}}),
+               dict(id=2, type='PipeWire:Interface:Node', info={'props': {'node.name': m.ROUTE_CLIENT}}),
+               dict(id=41, type='PipeWire:Interface:Link', info={'output-node-id': 1, 'input-node-id': 2, 'state': 'init'}),
+               dict(id=42, type='PipeWire:Interface:Link', info={'output-node-id': 9, 'input-node-id': 2, 'state': 'active'}),
+               dict(id=43, type='PipeWire:Interface:Link', info={'output-node-id': 1, 'input-node-id': 2, 'state': 'error'})]
+    assert m.sources_of(stalled, m.ROUTE_CLIENT) == {m.MAPPING}, 'unknown nodes and failed links are not feeds'
     audio = Audio(); audio.feeds = None
     m.reconcile(audio, state())
     assert audio.default == m.MAPPING, 'an unknown route changes nothing'
@@ -260,6 +271,20 @@ with tempfile.TemporaryDirectory() as temporary:
         assert audio.existing and audio.default == expected, (selected, audio.default)
         assert m.gain(audio.mapping) == {'volume': [32768, 32768], 'mute': True}
         assert json.loads(saved.read_text()) == {'source': {'volume': [32768, 32768], 'mute': True}}
+    # With the array missing the old mapping stays until it returns; a failure
+    # after the swap still leaves a working default that the next pass maps.
+    audio = Audio(default=m.LEGACY); audio.no_dsp = True
+    audio.legacy = (obj(m.MAPPING, 65536, False), obj(m.LEGACY, 65536, False))
+    try: m.reconcile(audio, state())
+    except m.Deferred: pass
+    assert audio.legacy and audio.default == m.LEGACY
+    audio.no_dsp = False; audio.missing = 'input_FR'; saved = state()
+    try: m.reconcile(audio, saved)
+    except RuntimeError: pass
+    else: raise AssertionError('missing port accepted')
+    assert audio.legacy is None and audio.default == DSP
+    audio.missing = None; m.reconcile(audio, saved)
+    assert audio.default == m.MAPPING
     audio = Audio(); audio.legacy = (obj(m.MAPPING), obj(m.LEGACY))
     stranger = dict(LEGACY_MODULE, argument='sink_name=omarchy_asahi_mic')
     audio.modules = lambda: [stranger]

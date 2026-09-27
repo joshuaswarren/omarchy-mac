@@ -140,9 +140,17 @@ def sources_of(graph, client):
     nodes = {obj['id']: obj.get('info', {}).get('props', {}) for obj in graph if obj.get('type', '').endswith(':Node')}
     ports = {obj['id']: obj.get('info', {}).get('props', {}).get('node.id') for obj in graph if obj.get('type', '').endswith(':Port')}
     client_nodes = {id_ for id_, props in nodes.items() if client in (props.get('node.name'), props.get('application.name'))}
-    return {nodes.get(ports.get(obj['info'].get('output-port-id')), {}).get('node.name')
-            for obj in graph if obj.get('type', '').endswith(':Link')
-            and ports.get(obj.get('info', {}).get('input-port-id')) in client_nodes}
+    feeds = set()
+    for obj in graph:
+        info = obj.get('info', {})
+        if not obj.get('type', '').endswith(':Link') or info.get('state') == 'error':
+            continue
+        if info.get('input-node-id', ports.get(info.get('input-port-id'))) not in client_nodes:
+            continue
+        name = nodes.get(info.get('output-node-id', ports.get(info.get('output-port-id'))), {}).get('node.name')
+        if name:
+            feeds.add(name)
+    return feeds
 
 
 def port(graph, node_name, port_name):
@@ -218,13 +226,14 @@ def owned(module, media_class=None):
             and OWNER + '=' in argument and (media_class is None or ('media.class=' + media_class) in argument))
 
 
-def retire_legacy(audio, state):
+def retire_legacy(audio, state, dsp):
     # An earlier version mapped into a null sink. Keep its gain and mute, then
     # remove it: its sink could become the default output and its monitor fails
-    # untargeted captures. Returns whether its monitor was the default input.
+    # untargeted captures. A selected one hands the default to the DSP, which
+    # the new mapping then takes over like any first mapping.
     sinks = {obj['name']: obj for obj in audio.objects('sinks')}
     if MAPPING not in sinks:
-        return False
+        return
     modules = [module for module in audio.modules() if owned(module) and 'media.class=Audio/Source/Virtual' not in module['argument']]
     if len(modules) != 1:
         raise RuntimeError(MAPPING + ' is a sink this service does not own; not replacing it')
@@ -233,7 +242,8 @@ def retire_legacy(audio, state):
         write_state(state, legacy_gain(gain(sinks[MAPPING]), gain(sources[LEGACY])))
     selected = audio.run('pactl', 'get-default-source') == LEGACY
     audio.run('pactl', 'unload-module', modules[0]['index'])
-    return selected
+    if selected:
+        audio.run('pactl', 'set-default-source', dsp)
 
 
 def session_priority(obj):
@@ -316,10 +326,12 @@ def reconcile(audio, state, save_only=False, checked=None):
     if save_only:
         save_state(audio, state)
         return
-    migrated = retire_legacy(audio, state)
     sources = audio.objects('sources')
-    original_input = audio.run('pactl', 'get-default-source')
     dsp = find_dsp(sources)
+    if dsp:
+        retire_legacy(audio, state, dsp)
+        sources = audio.objects('sources')
+    original_input = audio.run('pactl', 'get-default-source')
     if not dsp:
         mapped = any(obj['name'] == MAPPING for obj in sources)
         if mapped or claim(state):
@@ -401,9 +413,11 @@ def reconcile(audio, state, save_only=False, checked=None):
         else:
             raise RuntimeError('Asahi microphone stereo links did not become ready')
         current_input = audio.run('pactl', 'get-default-source')
-        # Removing the old mapping let WirePlumber pick some default; the old
-        # mapping's selection carries over to the new one.
-        select_mapping = (original_input in ('', dsp) or returning or migrated) and current_input == original_input
+        key = (output, *inputs)
+        # A mapping the default route was seen to bypass is not selected again,
+        # or the default would flip between it and the DSP on every event.
+        misrouted = ('misroute',) + key in (checked or ())
+        select_mapping = (original_input in ('', dsp) or returning) and current_input == original_input and not misrouted
         # Only a mapping that carries the microphone may be the default input: a
         # linked one can still carry digital silence (#505). A muted mapping is
         # the user's microphone mute (the mute key mutes the default source),
@@ -412,7 +426,6 @@ def reconcile(audio, state, save_only=False, checked=None):
         # sampled once, not on every event.
         def audible_now():
             return mapping_audible(audio.objects('sources'))
-        key = (output, *inputs)
         sampled = True
         if (select_mapping or (current_input == MAPPING and key not in (checked or ()))) and audible_now():
             sampled = audio.signal(MAPPING)
@@ -447,6 +460,8 @@ def reconcile(audio, state, save_only=False, checked=None):
             if feeds is not None and checked is not None:
                 checked.add(('route',) + key)
             if feeds is not None and feeds != {MAPPING} and audio.run('pactl', 'get-default-source') == MAPPING:
+                if checked is not None:
+                    checked.add(('misroute',) + key)
                 audio.run('pactl', 'set-default-source', dsp)
                 problem = 'Apps recording from the default input reach ' + ', '.join(sorted(map(str, feeds))) + ', not the Asahi microphone mapping; the default input is the DSP'
         # Existing DSP gain/mute is never reset. Save only the owned mapping so
