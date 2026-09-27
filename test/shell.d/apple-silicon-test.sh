@@ -4,8 +4,18 @@ set -euo pipefail
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
+# /usr/bin as the runtime and omarchy-mac install it: the legacy alias beside
+# the runtime's predicate.
+usr_bin() {
+  mkdir -p "$1"
+  ln -sf "$ROOT"/bin/* "$1/"
+  ln -sf "$ROOT/packages/omarchy-mac/bin/omarchy-hw-apple" "$1/"
+}
+
 test_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp"' EXIT
+legacy_bin=$test_tmp/usr-bin
+usr_bin "$legacy_bin"
 
 stub_bin="$test_tmp/bin"
 proc_root="$test_tmp/proc"
@@ -26,7 +36,7 @@ else
   OMARCHY_PROC_ROOT="$proc_root" PATH="$stub_bin:$ROOT/bin:$PATH" "$ROOT/bin/omarchy-hw-apple-silicon" ||
     fail "Apple Silicon detector accepts aarch64 Apple device trees"
   pass "Apple Silicon detector accepts aarch64 Apple device trees"
-  OMARCHY_PROC_ROOT="$proc_root" PATH="$stub_bin:$ROOT/bin:$PATH" "$ROOT/bin/omarchy-hw-apple" ||
+  OMARCHY_PROC_ROOT="$proc_root" PATH="$stub_bin:$ROOT/bin:$PATH" "$legacy_bin/omarchy-hw-apple" ||
     fail "legacy detector keeps preserved Apple user services working"
   pass "legacy detector keeps preserved Apple user services working"
 
@@ -34,7 +44,7 @@ else
     fail "Apple Silicon detector rejects non-aarch64 systems"
   fi
   pass "Apple Silicon detector rejects non-aarch64 systems"
-  if OMARCHY_TEST_ARCH=x86_64 OMARCHY_PROC_ROOT="$proc_root" PATH="$stub_bin:$ROOT/bin:$PATH" "$ROOT/bin/omarchy-hw-apple" 2>/dev/null; then
+  if OMARCHY_TEST_ARCH=x86_64 OMARCHY_PROC_ROOT="$proc_root" PATH="$stub_bin:$ROOT/bin:$PATH" "$legacy_bin/omarchy-hw-apple" 2>/dev/null; then
     fail "legacy detector rejects Intel and T2 systems"
   fi
 
@@ -43,7 +53,7 @@ else
     fail "Apple Silicon detector rejects non-Apple aarch64 systems"
   fi
   pass "Apple Silicon detector rejects non-Apple aarch64 systems"
-  if OMARCHY_PROC_ROOT="$proc_root" PATH="$stub_bin:$ROOT/bin:$PATH" "$ROOT/bin/omarchy-hw-apple"; then
+  if OMARCHY_PROC_ROOT="$proc_root" PATH="$stub_bin:$ROOT/bin:$PATH" "$legacy_bin/omarchy-hw-apple"; then
     fail "legacy detector rejects other ARM systems"
   fi
   pass "legacy detector preserves the Apple Silicon hardware gate"

@@ -1,6 +1,6 @@
 # Lifecycle dispatch
 
-Upstream Omarchy owns the boot lifecycle flows: the owner wizard, account creation, LUKS discovery, retry journals, snapshots, the migration runner and the update flow. Some platforms boot through a chain those flows can't drive generically. Apple Silicon Macs boot m1n1 → U-Boot → GRUB or Limine, keep the install key on an ext4 boot partition and name it on the kernel command line. For those platforms, the flows call a small fixed set of operations through `bin/omarchy-lifecycle-dispatch`, and a platform boot package implements them as root-owned entrypoints. Every other platform keeps the generic path, and each dispatch call is a no-op there.
+Upstream Omarchy owns the boot lifecycle flows: the owner wizard, account creation, LUKS discovery, retry journals, snapshots, the migration runner and the update flow. Some platforms boot through a chain those flows can't drive generically. Apple Silicon Macs boot m1n1 → U-Boot → GRUB or Limine, keep the install key on an ext4 boot partition and name it on the kernel command line. For those platforms, the flows call a small fixed set of operations through `bin/omarchy-lifecycle-dispatch`, and a platform boot package implements them as root-owned entrypoints. System and user setup call two more, which a platform's runtime package implements, so its own setup runs from Omarchy's without an inline platform branch. Every other platform keeps the generic path, and each dispatch call is a no-op there.
 
 ## The command
 
@@ -13,18 +13,19 @@ The first form runs the operation. `--resolve` prints the entrypoint the operati
 
 | Situation | Run | `--resolve` |
 | --- | --- | --- |
-| The platform registers no boot package (`generic`, `generic-aarch64`, and `qualcomm` today) | no-op, exit 0 | prints nothing, exit 0 |
+| The platform registers no package (`generic`, `generic-aarch64`, and `qualcomm` today) | no-op, exit 0 | prints nothing, exit 0 |
 | The entrypoint exists and passes the trust rules | execs it; its exit status is the result | prints its path |
 | A required operation has no entrypoint, and the package is not installed | exit 3 (an entrypoint's own status could also be 3; with `--resolve` it is only this): `Error: <operation> on <platform> needs <package>, which provides <path>; it is not installed` | same error |
 | A required operation has no entrypoint, but the package is installed (its pacman record says so) | exit 1: `Error: <operation> on <platform> needs <path>, which <package> <version> does not provide; update <package>` | same error |
-| An optional operation has no entrypoint | no-op, exit 0 | prints nothing, exit 0 |
+| An optional operation has no entrypoint (every setup operation is optional, so none of them ever fails for a missing package) | no-op, exit 0 | prints nothing, exit 0 |
+| A user operation (`setup-user`) is run as root | exit 1: `Error: <operation> runs as the user being set up, never as root` | same error |
 | The entrypoint fails the trust rules | exit 1: `Error: refusing <path>: ...` (optional operations too) | same error |
 | `omarchy-hw-platform` can't settle the platform | exit 1 | exit 1 |
 | No operation, or one outside the fixed set | exit 2 with usage | exit 2 |
 
 ## Operations
 
-The set is fixed in the dispatcher; adding one is an upstream change. The `provision-*` operations take no arguments and work on fixed paths: `/var/lib/omarchy/provisioning` holds the staged install key (`luks-key`) and the re-key journal (`luks-rekey.state`). `luks-slots` takes the slot numbers it records. Factory reset names the factory root it is about to activate, since that is not `/` yet, and hands `reset-commit` the throwaway key on standard input, never in arguments. The other operations define their arguments when their caller is wired.
+The set is fixed in the dispatcher; adding one is an upstream change. Every operation runs as root except `setup-user`, which runs as the user being set up. The `provision-*` operations take no arguments and work on fixed paths: `/var/lib/omarchy/provisioning` holds the staged install key (`luks-key`) and the re-key journal (`luks-rekey.state`). `luks-slots` takes the slot numbers it records. Factory reset names the factory root it is about to activate, since that is not `/` yet, and hands `reset-commit` the throwaway key on standard input, never in arguments. The other operations define their arguments when their caller is wired.
 
 | Operation | Called | Contract | Apple | Caller |
 | --- | --- | --- | --- | --- |
@@ -39,6 +40,8 @@ The set is fixed in the dispatcher; adding one is an upstream change. The `provi
 | `update-verify` | Update, after the last package step: the transaction, migrations, the post-update hook, AUR, mise and orphans | Read-only. Verifies the boot chain boots the updated system, whose new kernel may still wait for its reboot. A failure leaves the update unfinished: it exits non-zero and offers no reboot. | required | `omarchy-update-boot verify` (`omarchy update`) |
 | `boot-rebuild` | Owner provisioning, when a factory reset left boot entries for another machine identity | Rebuilds the platform's boot files, after upstream has started the Limine menu over where there is one | optional | `omarchy-provision-owner` |
 | `luks-slots` | Owner provisioning, once the re-key keeps only the owner's slot and the acknowledged recovery slot, before it destroys the staged key; the disk password change, once the owner's new key is confirmed; the password reset with the recovery key, once the owner's new password and the recovery key are the disk's only keys and the accounts follow | `luks-slots owner=<slot> [recovery=<slot>]` records the root volume's kept slots wherever the platform's boot checks look for them. Without `recovery=` the recorded recovery slot stays; an empty one records none. Idempotent. It fails when a slot is not in the LUKS header, and the caller then retries. A platform that implements it also has owner provisioning create a recovery passphrase (see [Recovery passphrase](#recovery-passphrase)). | required | `omarchy-provision-owner`, `omarchy-drive-password`, `omarchy-drive-recover` |
+| `setup-system [image-first-boot]` | Hardware setup, as its last leaf (`install/hardware/platform-setup.sh`), on every install and every rerun of `omarchy-apply-hardware`. In an image build it is queued with the other leaves and runs on the machine's first boot, with `image-first-boot`. | The platform's machine-wide setup: services, configuration and drivers its runtime package owns. Idempotent. Needs no network with `image-first-boot` (that boot may be offline), and there it asks for a boot-file rebuild by creating `/var/lib/omarchy/image/boot-rebuild` rather than building one, since the deferred setup rebuilds once after its last step. A failure fails the leaf, and on an image's first boot the step stays queued for the next boot. | optional | `install/hardware/platform-setup.sh` |
+| `setup-user` | Runs as the user being set up: at the end of user finalization (`install/user/platform-setup.sh`, from `install/user/all.sh`), and in first run once the session is up. Finalization inside an image build skips it; first run on the machine runs it. | The platform's per-user setup. Idempotent. Finalization may have no session (the ISO chroot, owner setup), so work that needs one (a user unit started now, a D-Bus call) is left for the first-run call, and its absence is not a failure. A failure fails finalization or the first-run step, so first run stays pending and runs it again at the next login. | optional | `install/user/platform-setup.sh`, `omarchy-provision-first-run` |
 | `migrate` | The platform migration (`migrations/1790347292.sh`), on every update until it has run | Moves the machine onto the platform's official package set in place, or does nothing when the platform has no target set yet. Idempotent and resumable: a machine already on the target, or one whose migration waits for a reboot, exits 0. A refusal that changed nothing exits 75, which leaves the migration pending without stopping later migrations or the update; a failure exits with any other non-zero status and stops them. | optional | the migration; ticket 42 |
 
 ## Platform registration
@@ -47,18 +50,20 @@ Registration is code in `bin/omarchy-lifecycle-dispatch`, not configuration. No 
 
 | Platform | Implementation directory | Package | Required operations |
 | --- | --- | --- | --- |
-| `apple-silicon` | `/usr/lib/omarchy/mac-boot` | `omarchy-mac-boot` | all except `update-preflight`, `boot-rebuild` and `migrate` |
+| `apple-silicon` | `/usr/lib/omarchy/mac-boot` | `omarchy-mac-boot` | all its operations except `update-preflight`, `boot-rebuild` and `migrate` |
+| `apple-silicon`: `setup-system`, `setup-user` | `/usr/lib/omarchy/mac` | `omarchy-mac` | none |
 | `generic`, `generic-aarch64`, `qualcomm` | none | none | none: every operation is a no-op, and callers keep their generic path |
 
 The entrypoint for an operation is `<implementation directory>/<operation>`. A registered platform's required operations must be shipped. Its optional operations may be left out, and then they are no-ops.
 
-`omarchy-mac-boot` ships the provisioning entrypoints from 20260925-2 (ticket 32), and owner provisioning has no other Apple path, so they are required: a Mac whose `omarchy-mac-boot` is older stops before the owner form with the dispatcher's error naming the package, where the generic Limine path would leave the boot-partition key and `rd.luks.key=` behind. The reset entrypoints (ticket 34) are required for the same reason: a Mac without them stops before the reset is confirmed, where the generic path would rebuild a Limine UKI the Mac does not boot. `luks-slots` (ticket 33) is required for the same reason: the boot check proves the owner's and the recovery slot, so a Mac whose package cannot record them stops before the owner form too, and `omarchy-drive-password` refuses to change the system disk. `boot-rebuild` stays optional until a platform ships it: without it, the stale-entry refresh runs `limine-update`. Ticket 36 shipped without it, since a Limine Mac restores snapshots through `limine-snapper-restore` and rebuilds nothing. `update-verify` is required, and `omarchy update` calls it (ticket 35).
+`omarchy-mac-boot` ships the provisioning entrypoints from 20260925-2 (ticket 32), and owner provisioning has no other Apple path, so they are required: a Mac whose `omarchy-mac-boot` is older stops before the owner form with the dispatcher's error naming the package, where the generic Limine path would leave the boot-partition key and `rd.luks.key=` behind. The reset entrypoints (ticket 34) are required for the same reason: a Mac without them stops before the reset is confirmed, where the generic path would rebuild a Limine UKI the Mac does not boot. `luks-slots` (ticket 33) is required for the same reason: the boot check proves the owner's and the recovery slot, so a Mac whose package cannot record them stops before the owner form too, and `omarchy-drive-password` refuses to change the system disk. `boot-rebuild` stays optional until a platform ships it: without it, the stale-entry refresh runs `limine-update`. Ticket 36 shipped without it, since a Limine Mac restores snapshots through `limine-snapper-restore` and rebuilds nothing. `update-verify` is required, and `omarchy update` calls it (ticket 35). `omarchy-mac`, from the same repository as `omarchy-mac-boot`, implements `setup-system` and `setup-user` in `/usr/lib/omarchy/mac`; setup belongs to the Mac's runtime package, not its boot package, and is optional: a Mac without `omarchy-mac` gets Omarchy's generic setup.
 
 ## Trust rules
 
 - The dispatcher runs as `bash -p`, so a root caller's `BASH_ENV` and exported functions run nothing in it. As root it uses a fixed `PATH`, runs the detector installed beside it with nothing in its environment but that `PATH` (the detector reads only the live device tree as root), and resolves only the fixed implementation directory.
 - An entrypoint runs only if it is a regular executable file. Neither the file nor any directory up to `/` may be a symlink, and all of them must be owned by root and not writable by group or others. An entrypoint that fails these rules is refused, even for an optional operation.
 - The entrypoint runs with an empty environment apart from `PATH=/usr/local/sbin:/usr/local/bin:/usr/bin`. It gets the caller's arguments, standard streams and working directory. Entrypoints use fixed paths, never environment variables. Anything that can also run them directly re-checks the platform itself.
+- `setup-user` refuses root, so it never runs as anyone but its caller. Its entrypoint follows the same trust rules, and besides `PATH` it gets only these, when the caller has them set: `HOME`, `USER`, `XDG_CONFIG_HOME` and `XDG_STATE_HOME` (where the user's configuration and setup markers live), `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`, `WAYLAND_DISPLAY` and `OMARCHY_PATH`.
 - For unprivileged tests, `OMARCHY_LIFECYCLE_ROOT` (absolute) prefixes the implementation directory, and the detector's fixture roots apply. Files the caller owns count as root's. Root ignores both.
 
 ## Callers
@@ -90,6 +95,15 @@ A dispatch point takes one of two shapes:
 - `omarchy-update-boot verify` runs after the last package step. When it fails, the update still checks its log, refreshes the update indicator and releases Stay Awake, then says the update is not finished and exits 1 without `omarchy-update-restart`, so no reboot is offered.
 - `omarchy-update-boot` resolves the operation as the user first and runs it with `sudo` only when it resolves to an entrypoint, so an update with nothing to run never asks for root. A failed resolution fails the step with the dispatcher's message, except one: `update-verify` on a machine without its platform's boot package at all (exit 3) warns that the boot files were not verified and lets the update finish. Such a machine predates the package and boots a chain it does not manage; its migration installs the package, and from then on a failed verification blocks. A package too old to ship `update-verify` blocks, since the fix is one package update away.
 - The update path rebuilds no boot file itself: package hooks do, and `update-verify` catches what they missed.
+
+### Hardware setup (`install/hardware/platform-setup.sh`)
+
+- The last leaf of `install/hardware/all.sh` runs `setup-system`, so it builds on every generic leaf. As a `run_logged` leaf it is queued in an image build like any other, and `omarchy-provision-hardware` runs it on the first boot with `OMARCHY_IMAGE_DEFERRED_HARDWARE=1`, which the leaf passes on as `image-first-boot`. The environment variable itself never reaches the entrypoint.
+
+### User setup (`install/user/platform-setup.sh`, `bin/omarchy-provision-first-run`)
+
+- The last leaf of `install/user/all.sh` runs `setup-user` at the end of finalization. While `/var/lib/omarchy/image/target` exists the root is still being built, where a normal user's detector would read the build host, so the leaf says so and skips it.
+- First run runs `setup-user` again as its own step, after the user units are enabled, now that the session is up. Its failure, like finalization's, leaves first run pending for the next login.
 
 ### Disk password change (`bin/omarchy-drive-password`)
 
@@ -149,6 +163,7 @@ Snapdragon laptops boot Limine with unified kernel images, like x86, and `qualco
 ## Tests
 
 - `test/shell.d/lifecycle-dispatch-test.sh` covers the dispatcher on every platform fixture:
+  - the setup operations: no-ops off Apple, `omarchy-mac`'s directory on Apple (never `omarchy-mac-boot`'s), no-ops without `omarchy-mac`, `setup-user` refused as root and given only its allowlisted environment
   - no-ops on x86, generic aarch64 and Qualcomm, even with Mac entrypoints on disk
   - Apple with and without the boot package
   - arguments, exit status and the cleared environment
@@ -164,6 +179,8 @@ Snapdragon laptops boot Limine with unified kernel images, like x86, and `qualco
 - `test/shell.d/provision-owner-luks-test.sh` runs owner provisioning through the dispatcher into `omarchy-mac-boot`'s staged entrypoints, and `packages/omarchy-mac/boot/test/mac-provision-test.sh` covers those entrypoints on their own (ticket 32) and `luks-slots` (ticket 33).
 - `test/shell.d/factory-reset-luks-test.sh` runs `stage_full_reset` through the real dispatcher: on x86 with Mac entrypoints on disk that must not run (generic path unchanged), and on Apple into `omarchy-mac-boot`'s staged reset entrypoints, covering a finished reset, with the Mac's first boot re-armed and `@factory` scrubbed, and a failed verification that rolls back to the previous root. `test/shell.d/factory-reset-dispatch-test.sh` and `factory-reset-accounts-test.sh` are upstream's. `packages/omarchy-mac/boot/test/mac-reset-test.sh` covers the reset entrypoints on their own (tickets 34 and 81).
 - `test/shell.d/luks-rekey-journal-test.sh` also runs the Apple setup attempt, recovery step included, killed after every durable step on the slot-table fake and on file-backed LUKS2 and LUKS1 volumes (ticket 33).
+- `test/shell.d/platform-setup-test.sh` runs the two setup leaves and first run through the real dispatcher: each is the last of its setup, a no-op on x86, `image-first-boot` only on an image's first boot, the user leaf waiting for first run in an image build, and a failing entrypoint failing the leaf and keeping first run pending. `test/shell.d/image-deferred-hardware-test.sh` checks that an image build queues every hardware leaf, the system one included.
+- `test/shell.d/first-run-test.sh` checks that a failed finalization keeps first run pending.
 - `test/shell.d/migrate-deferred-test.sh` covers the runner: a deferred migration stays pending with its notification while later ones run, is retried on every run, and any other failure still stops the queue.
 - `test/shell.d/drive-password-test.sh` checks that an Apple password change records the owner's new slot through `luks-slots`, including after an interruption, and that x86 never calls it.
 - `test/shell.d/drive-recover-test.sh` runs the password reset with the recovery key from a boot's cached unlock, killed after every step and rerun on the slot-table fake and on file-backed LUKS2 and LUKS1 volumes, on x86 and on Apple (where it records both slots through `luks-slots`), and the mac-image harness's `recovery-reset` case runs it on an image with a power loss part way (ticket 70).

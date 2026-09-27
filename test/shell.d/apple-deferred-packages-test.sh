@@ -10,8 +10,6 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 # the steps themselves, run on a stubbed Mac where nothing is installed yet.
 apple_steps=(
   install/hardware/vulkan.sh
-  install/hardware/apple/audio.sh
-  install/hardware/apple/video-decode.sh
 )
 # Reaches a Mac only with the accessory plugged in, and builds DKMS modules for
 # the running kernel, so it needs the network anyway. speaker-tuning.sh is not
@@ -33,7 +31,6 @@ stub lspci 'exit 0'
 stub omarchy-pkg-missing 'exit 0'
 stub omarchy-pkg-present 'exit 0'
 stub omarchy-pkg-add 'printf "%s\n" "$@" >>"$PKG_LOG"'
-stub omarchy-setup-mac 'exit 0'
 
 # Every hardware step that installs a package behind the Apple detector is one
 # of the steps above.

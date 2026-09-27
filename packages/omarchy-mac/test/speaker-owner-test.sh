@@ -64,7 +64,7 @@ first_boot_handoff() {
     bash -c 'source "$1"; stage_provisioning' _ "$first_boot" >/dev/null 2>&1
 }
 
-# The deferred audio step's omarchy-setup-mac --system.
+# The platform setup leaf's omarchy-mac-setup-system.
 setup() { PATH="$work/bin:$PATH" "$1/usr/bin/omarchy-mac-setup-system" "$1" >/dev/null 2>&1; }
 
 enabled_once() {

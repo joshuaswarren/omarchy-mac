@@ -41,6 +41,9 @@ Exec=env SPECIAL=yes chromium %U
   apple = bind / 'omarchy-hw-apple-silicon'
   apple.write_text('#!/bin/bash\nexit 0\n')
   apple.chmod(0o755)
+  platform = bind / 'omarchy-hw-platform'
+  platform.write_text('#!/bin/bash\necho apple-silicon\n')
+  platform.chmod(0o755)
   sentinel = tmp / 'forbidden'
   for name in ('sudo', 'pkexec', 'curl'):
     path = bind / name
@@ -51,8 +54,9 @@ Exec=env SPECIAL=yes chromium %U
     assert result.returncode == status, (args, result.returncode, result.stderr)
     return result
   wrap = str(root / 'bin/omarchy-cmd-electron-gl-wrap')
-  leaf = 'source "$OMARCHY_PATH/install/user/hardware/apple/electron-gl.sh"'
-  system = 'source "$OMARCHY_PATH/install/hardware/apple/electron-gl.sh"'
+  # omarchy-mac's user and system halves of the Electron wrapping.
+  leaf = '"$OMARCHY_PATH/packages/omarchy-mac/lib/electron-desktop-entries"'
+  system = '"$OMARCHY_PATH/packages/omarchy-mac/lib/electron-launchers"'
   run([wrap, '--check', 'chromium', str(real)], 4)
   run(['bash', '-euo', 'pipefail', '-c', leaf])
   assert not sentinel.exists() and not (bind / 'chromium').exists()

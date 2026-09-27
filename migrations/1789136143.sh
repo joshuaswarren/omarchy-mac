@@ -1,7 +1,5 @@
 echo "Map the Asahi mic array to stereo and retry speakersafetyd"
 
-# Fresh installs run the per-user mic leaf. Reuse it so existing Apple Silicon
-# sessions get the same mapping without a reboot.
-mic_setup="$OMARCHY_PATH/install/user/hardware/apple/mic.sh"
-[[ -f $mic_setup ]] || exit 0
-source "$mic_setup"
+# omarchy-mac's user setup enables the microphone mapper and starts it in a
+# live session; this runs it for users set up before.
+omarchy-lifecycle-dispatch setup-user
