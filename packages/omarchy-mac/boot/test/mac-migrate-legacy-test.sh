@@ -734,7 +734,7 @@ grep -q "HOOKS base udev plymouth keyboard autodetect microcode modconf kms keym
   grep -qx hooks/encrypt "$F/esp/initramfs-linux-aurora.img" ||
   fail "the transaction, with the HOOKS baseline installed, still built the busybox image GRUB boots" "$(cat "$F/esp/initramfs-linux-aurora.img")"
 [[ $(grep -E '^(mkinitcpio|update-grub|boot-check|umount|mount|limine-boot)' "$F/boot.log" | tr '\n' '|') == \
-  "boot-check pending --boot-chain|mkinitcpio -p linux-aurora|update-grub |boot-check pending --boot-chain linux-aurora|umount /boot|mount /boot/efi|mkinitcpio -p linux-aurora|limine-boot activate OMARCHY_PATH=/usr/share/omarchy|boot-check pending --boot-chain linux-aurora|" ]] ||
+  "boot-check pending --boot-chain|mkinitcpio -p linux-aurora|update-grub |boot-check pending --boot-chain linux-aurora|umount /boot|mount /boot/efi|mkinitcpio -p linux-aurora|limine-boot activate OMARCHY_PATH=/usr/share/omarchy|boot-check pending --boot-chain linux-aurora|boot-check pending --boot-chain linux-aurora|" ]] ||
   fail "the busybox image and GRUB are rebuilt and checked, then the ESP moves and the new image is built, before Limine takes the slot" "$(cat "$F/boot.log")"
 [[ $(grep '^cryptsetup' "$F/pacman.log" | cut -d' ' -f2 | sort -u | xargs) == "luksHeaderBackup luksUUID" ]] ||
   fail "the LUKS header, keyslots and passphrase are never changed, only backed up and read" "$(grep cryptsetup "$F/pacman.log")"

@@ -28,3 +28,7 @@ libva-v4l2_request-avd
 
 # Widevine for DRM streaming.
 widevine
+
+# Screen recording (omarchy-capture-screenrecording): gpu-screen-recorder finds
+# no display device to capture on Apple Silicon, so Macs record with wf-recorder.
+wf-recorder
