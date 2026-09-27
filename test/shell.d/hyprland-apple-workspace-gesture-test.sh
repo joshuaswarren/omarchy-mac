@@ -7,16 +7,12 @@ require_command lua
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 
-# The runtime as installed beside omarchy-mac, which puts its gesture in the
-# runtime's platform directory.
-omarchy="$tmpdir/omarchy"
-mkdir -p "$omarchy"
-for entry in "$ROOT"/*; do
-  [[ ${entry##*/} == "default" ]] || ln -s "$entry" "$omarchy/${entry##*/}"
-done
-cp -R "$ROOT/default" "$omarchy/default"
-mkdir -p "$omarchy/default/hypr/platform"
-cp "$ROOT/packages/omarchy-mac/share/omarchy/default/hypr/platform/apple-gestures.lua" "$omarchy/default/hypr/platform/"
+# The runtime under test (this tree, or another layout's through
+# OMARCHY_TEST_RUNTIME) with omarchy-mac staged, whose gesture Omarchy loads
+# from the packaged tree.
+runtime=${OMARCHY_TEST_RUNTIME:-$ROOT}
+"$ROOT/packages/omarchy-mac/install" "$tmpdir/pkg" >/dev/null
+omarchy=$tmpdir/pkg/usr/share/omarchy
 
 mkdir -p "$tmpdir/apple-bin" "$tmpdir/other-bin"
 printf '#!/bin/sh\nexit 0\n' >"$tmpdir/apple-bin/omarchy-hw-apple-silicon"
@@ -29,12 +25,12 @@ chmod +x "$tmpdir"/*-bin/omarchy-hw-apple-silicon
 # gesture on the same fingers and mods is refused once an earlier one covers
 # its direction or axis, and the refusal is a config error.
 load_config() {
-  local platform="$1" edit="${2:-}" omarchy_path="${OMARCHY_UNDER_TEST:-$omarchy}" packaged_path="${PACKAGED_UNDER_TEST:-$omarchy}"
+  local platform="$1" edit="${2:-}" omarchy_path="${OMARCHY_UNDER_TEST:-$runtime}" packaged_path="${PACKAGED_UNDER_TEST:-$omarchy}"
   local home
   home=$(mktemp -d "$tmpdir/home.XXXXXX")
 
   mkdir -p "$home/.config"
-  cp -R "$ROOT/config/hypr" "$home/.config/hypr"
+  cp -R "$runtime/config/hypr" "$home/.config/hypr"
   [[ -z $edit ]] || printf '%s\n' "$edit" >>"$home/.config/hypr/input.lua"
 
   HOME="$home" XDG_CONFIG_HOME="$home/.config" XDG_STATE_HOME="$home/.local/state" OMARCHY_PATH="$omarchy_path" OMARCHY_PACKAGED_PATH="$packaged_path" \
@@ -125,21 +121,21 @@ swipe="3 horizontal workspace"
 
 [[ $(load_config apple) == "$swipe" ]] || fail "a Mac swipes between workspaces with three fingers" "$(load_config apple)"
 [[ -z $(load_config other) ]] || fail "x86 and Snapdragon keep no default gesture" "$(load_config other)"
-[[ -z $(OMARCHY_UNDER_TEST=$ROOT PACKAGED_UNDER_TEST=$ROOT load_config apple) ]] ||
-  fail "the runtime alone carries no Mac gesture" "$(OMARCHY_UNDER_TEST=$ROOT PACKAGED_UNDER_TEST=$ROOT load_config apple)"
+[[ -z $(PACKAGED_UNDER_TEST=$tmpdir/none load_config apple) ]] ||
+  fail "the runtime alone carries no Mac gesture" "$(PACKAGED_UNDER_TEST=$tmpdir/none load_config apple)"
 [[ $(OMARCHY_UNDER_TEST=$ROOT load_config apple) == "$swipe" ]] ||
   fail "a development checkout in OMARCHY_PATH keeps the packaged gesture" "$(OMARCHY_UNDER_TEST=$ROOT load_config apple)"
-[[ ! -e $ROOT/default/hypr/apple-gestures.lua && -z $(find "$ROOT/default/hypr" -path '*platform*') ]] ||
+[[ ! -e $ROOT/default/hypr/apple-gestures.lua && ! -e $ROOT/default/hypr/platform ]] ||
   fail "the Mac gesture is omarchy-mac's, not the runtime's"
 pass "three-finger workspace swipe is on by default on Macs only, from omarchy-mac"
 
-shipped_line=$(sed -nE 's/^-- (hl\.gesture\(\{ fingers = 3, direction = "horizontal".*)$/\1/p' "$ROOT/config/hypr/input.lua")
+shipped_line=$(sed -nE 's/^-- (hl\.gesture\(\{ fingers = 3, direction = "horizontal".*)$/\1/p' "$runtime/config/hypr/input.lua")
 [[ -n $shipped_line ]] || fail "input.lua still ships the workspace gesture example"
 output=$(load_config apple "$shipped_line")
 [[ $output == "$swipe" ]] || fail "uncommenting the shipped example keeps one gesture and no config error" "$output"
 pass "uncommenting the shipped example does not duplicate the gesture"
 
-focus_lines=$(sed -nE 's/^-- (hl\.gesture\(\{ fingers = 3, direction = "(left|right)".*)$/\1/p' "$ROOT/config/hypr/input.lua")
+focus_lines=$(sed -nE 's/^-- (hl\.gesture\(\{ fingers = 3, direction = "(left|right)".*)$/\1/p' "$runtime/config/hypr/input.lua")
 (( $(wc -l <<<"$focus_lines") == 2 )) || fail "input.lua still ships the focus gesture examples" "$focus_lines"
 output=$(load_config apple "$focus_lines")
 [[ $output == $'3 left function\n3 right function' ]] || fail "three-finger focus gestures replace the workspace swipe" "$output"
