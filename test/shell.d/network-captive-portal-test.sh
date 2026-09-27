@@ -76,7 +76,7 @@ for command in omarchy-dns omarchy-network-band; do
 done
 # Preview uses only synthetic details, never the host's SSID or addresses.
 # Normal assertions keep the details empty to exercise missing-route handling.
-printf '#!/bin/bash\nif [[ -n ${NETWORK_TEST_PREVIEW:-} ]]; then\n  printf "type\\twifi\\niface\\ttest-wifi\\nssid\\tGuest Wi-Fi\\nip\\t192.0.2.10\\ngateway\\t192.0.2.1\\n"\nfi\n' > "$stage/bin/omarchy-network-status"
+printf '#!/bin/bash\nif [[ ${1:-} == --route-device ]]; then\n  echo test-wifi\nelif [[ -n ${NETWORK_TEST_PREVIEW:-} ]]; then\n  printf "type\\twifi\\niface\\ttest-wifi\\nssid\\tGuest Wi-Fi\\nip\\t192.0.2.10\\ngateway\\t192.0.2.1\\n"\nfi\n' > "$stage/bin/omarchy-network-status"
 chmod +x "$stage/bin/omarchy-network-status"
 printf '#!/bin/bash\nprintf "%%s\\n" "$@" >> "$NETWORK_TEST_BROWSER_LOG"\n' > "$stage/bin/omarchy-launch-browser"
 chmod +x "$stage/bin/omarchy-launch-browser"
@@ -92,4 +92,4 @@ if rg -q 'RESULT fail|ReferenceError|TypeError|Error:|Unable to assign|Binding l
 fi
 [[ -f $stage/browser.log ]] || fail "portal action launches the browser"
 [[ $(<"$stage/browser.log") == "http://ping.archlinux.org/nm-check.txt" ]] || fail "portal opens exactly one fixed HTTP URL"
-pass "network portal, recovery, disabled checks, outage, disconnect, keyboard navigation, and browser argv work in QML"
+pass "network portal, recovery, disabled checks, outage, disconnect, Thunderbolt bridge, keyboard navigation, and browser argv work in QML"

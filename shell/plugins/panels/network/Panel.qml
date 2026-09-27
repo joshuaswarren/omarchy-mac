@@ -436,13 +436,21 @@ Panel {
 
   // Bar pill state, derived from the native NetworkManager service so the
   // icon reflects connection changes without polling. Wired is preferred
-  // when both are up, matching the default-route device.
+  // when both are up unless the internet route leaves via Wi-Fi.
   readonly property var wiredDevice: findDevice(DeviceType.Wired)
-  readonly property string kind: {
-    if (wiredDevice && wiredDevice.connected) return "ethernet"
-    if (connectedWifiNetwork) return "wifi"
-    return "disconnected"
+  readonly property string kind: Model.barKind(!!(wiredDevice && wiredDevice.connected),
+    !!connectedWifiNetwork, routeDevice, wifiDevice ? wifiDevice.name : "")
+  property string routeDevice: ""
+  readonly property string routeKey: {
+    var parts = [Networking.connectivity]
+    var devices = networkDevices || []
+    for (var i = 0; i < devices.length; i++) {
+      var device = devices[i]
+      if (device) parts.push(device.name + ":" + device.connected + ":" + device.hasLink)
+    }
+    return parts.join(" ")
   }
+  onRouteKeyChanged: routeCheck.restart()
   readonly property int signalStrength: connectedWifiNetwork
     ? Math.round((connectedWifiNetwork.signalStrength || 0) * 100)
     : -1
@@ -859,7 +867,31 @@ Panel {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  Component.onCompleted: refresh()
+  Component.onCompleted: {
+    refresh()
+    routeCheck.restart()
+  }
+
+  // Settle NetworkManager's route updates before asking which link carries
+  // the internet route; a lookup still running retries after it finishes.
+  Timer {
+    id: routeCheck
+    interval: 500
+    repeat: false
+    onTriggered: {
+      if (routeProc.running) restart()
+      else routeProc.running = true
+    }
+  }
+
+  Process {
+    id: routeProc
+    command: ["omarchy-network-status", "--route-device"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.routeDevice = text.trim()
+    }
+  }
 
   // Pulls everything we want about the active route's interface in one shot.
   Process {

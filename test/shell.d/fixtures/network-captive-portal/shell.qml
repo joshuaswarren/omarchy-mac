@@ -124,6 +124,24 @@ ShellRoot {
   function disconnectedChecks() {
     check(panel.kind === "disconnected" && !panel.hasCaptivePortal, "disconnect clears stale portal")
     check(!panel.testButton.visible && panel.icon === "󰤮", "disconnected icon not portal icon")
+    NetworkMock.network.connected = true
+    NetworkMock.wifi.connected = true
+    NetworkMock.wired.connected = true
+    bridgeSettle.start()
+  }
+
+  Timer { id: bridgeSettle; interval: 1500; onTriggered: test.bridgeChecks() }
+
+  function bridgeChecks() {
+    check(panel.routeDevice === "test-wifi", "route lookup reports the Wi-Fi interface")
+    check(panel.kind === "wifi" && panel.icon !== "󰈀" && panel.icon !== "󰈂", "a wired link without the internet route leaves the Wi-Fi icon")
+    panel.routeDevice = "test-wired"
+    check(panel.kind === "ethernet", "a wired link that owns the internet route shows Ethernet")
+    NetworkMock.wired.connected = false
+    finish()
+  }
+
+  function finish() {
     if (failed) { Qt.quit(); return }
     console.log("RESULT pass")
     var preview = Quickshell.env("NETWORK_TEST_PREVIEW")

@@ -2,27 +2,34 @@
 
 # omarchy:summary=Print active network status for the shell
 # omarchy:group=network
-# omarchy:args=[--verbose]
+# omarchy:args=[--verbose|--route-device]
 
-verbose=false
+mode=status
 internet_probe=1.1.1.1
 
 case "${1:-}" in
   "")
     ;;
   --verbose)
-    verbose=true
+    mode=verbose
+    ;;
+  --route-device)
+    mode=route-device
     ;;
   *)
-    echo "Usage: omarchy-network-status [--verbose]" >&2
+    echo "Usage: omarchy-network-status [--verbose|--route-device]" >&2
     exit 2
     ;;
 esac
 
+route_device() {
+  ip route get "$internet_probe" 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit } }'
+}
+
 print_status() {
   local device nm state ssid signal freq
 
-  device=$(ip route get "$internet_probe" 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit } }')
+  device=$(route_device)
 
   if [[ -z $device ]]; then
     printf 'disconnected\t\t\t\n'
@@ -130,8 +137,8 @@ print_verbose() {
   print_ping_samples "$gw"
 }
 
-if [[ $verbose == "true" ]]; then
-  print_verbose
-else
-  print_status
-fi
+case $mode in
+  verbose) print_verbose ;;
+  route-device) route_device ;;
+  *) print_status ;;
+esac

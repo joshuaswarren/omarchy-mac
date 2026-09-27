@@ -29,6 +29,17 @@ function connectivityState(kind, connectivity, states, checksEnabled) {
   return "unknown"
 }
 
+// NetworkManager keeps a wired link connected even when it has no route to the
+// internet: a Thunderbolt bridge to another computer, a link-local or
+// never-default profile. Wired still wins, as it does when it owns the default
+// route, unless the routing table says internet traffic leaves via Wi-Fi.
+function barKind(wiredConnected, wifiConnected, routeDevice, wifiName) {
+  var viaWifi = wifiConnected && !!routeDevice && routeDevice === wifiName
+  if (wiredConnected && !viaWifi) return "ethernet"
+  if (wifiConnected) return "wifi"
+  return "disconnected"
+}
+
 function connectionIcon(kind, signalStrength, connectivity) {
   var restricted = connectivity === "portal" || connectivity === "limited"
   if (kind === "wifi") return restricted ? "󰤩" : wifiIconFor(signalStrength)
@@ -367,6 +378,7 @@ if (typeof module !== "undefined") {
   module.exports = {
     parseNetworkStatus: parseNetworkStatus,
     wifiIconFor: wifiIconFor,
+    barKind: barKind,
     connectionIcon: connectionIcon,
     connectivityState: connectivityState,
     captivePortalUrl: captivePortalUrl,
