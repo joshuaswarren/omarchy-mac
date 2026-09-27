@@ -1,0 +1,23 @@
+#!/bin/bash -p
+
+# omarchy-lifecycle-dispatch update-takeover <path>..., run before an update
+# moves aside files no package owns so an Omarchy package's upgrade can install
+# its own. Read-only. The Mac's boot chain, initramfs and pacman configuration
+# are written by its image and this package, not Omarchy's packages, and moving
+# one aside can leave the Mac unable to boot or update: any such path refuses
+# the whole takeover (exit 1), so every file stays. Anything else may go.
+
+set -euo pipefail
+
+for path in "$@"; do
+  case $path in
+    /boot | /boot/* | /etc/default/grub | /etc/grub | /etc/grub/* | /etc/limine | /etc/limine/* | /etc/mkinitcpio* | \
+      /etc/modprobe.d/omarchy-usb-autosuspend.conf | /etc/pacman.conf | /etc/pacman.d | /etc/pacman.d/* | \
+      /etc/systemd/oomd.conf.d | /etc/systemd/oomd.conf.d/* | /etc/tmpfiles.d/omarchy-zswap.conf | \
+      /usr/lib/initcpio | /usr/lib/initcpio/* | /usr/lib/systemd/user/app.slice.d | /usr/lib/systemd/user/app.slice.d/* | \
+      /usr/lib/systemd/zram-generator.conf.d | /usr/lib/systemd/zram-generator.conf.d/*)
+      echo "Refusing to replace Apple Silicon platform path: $path" >&2
+      exit 1
+      ;;
+  esac
+done
