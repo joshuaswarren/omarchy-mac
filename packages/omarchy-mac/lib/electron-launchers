@@ -1,0 +1,25 @@
+#!/bin/bash
+# Chromium, 1Password and Cursor need a DRM render node. An Apple Silicon Mac
+# without its GPU driver exposes only the display controller, so their GPU
+# process fails and the app can stay running with no window. Runtime's
+# omarchy-cmd-electron-gl-wrap puts a wrapper for each installed one in
+# /usr/local/bin, ahead of /usr/bin, which passes software GL flags only while
+# no render node exists. omarchy-mac-setup-system runs this as root; a
+# launcher an administrator owns (exit 3) is kept.
+set -euo pipefail
+[[ $(omarchy-hw-platform) == "apple-silicon" ]] || exit 0
+for app in chromium 1password cursor; do
+  case $app in
+    chromium) real=${OMARCHY_CHROMIUM_BIN:-/usr/bin/chromium} ;;
+    1password) real=${OMARCHY_1PASSWORD_BIN:-/opt/1Password/1password} ;;
+    cursor) real=${OMARCHY_CURSOR_BIN:-/usr/bin/cursor} ;;
+  esac
+  [[ -x $real ]] || continue
+  status=0
+  omarchy-cmd-electron-gl-wrap "$app" "$real" || status=$?
+  if (( status == 3 )); then
+    echo "Preserving administrator-owned $app launcher" >&2
+  elif (( status != 0 )); then
+    exit "$status"
+  fi
+done
