@@ -91,23 +91,24 @@ end
 
 -- The MacBook's own keyboard as Hyprland names it: SPI on M1, MTP on M2 and later.
 local builtin_keyboards = { "apple-spi-keyboard", "apple-mtp-keyboard" }
-local launcher_prefixes = {
-  "omarchy-launch-",
+local overlay_prefixes = {
   "omarchy-menu",
   "omarchy-shell shell toggle ",
   "omarchy-shell -q shell togglePanelAt ",
-  "omarchy-agent --pick",
-  "omacalc",
-  "uwsm-app ",
+}
+-- Pickers that paste into the focused window stay with that window's screen.
+local pastes_into_focused_window = {
+  ["omarchy-shell shell toggle omarchy.emojis"] = true,
+  ["omarchy-shell shell toggle omarchy.clipboard"] = true,
 }
 local apple_silicon
 
-local function opens_something(command)
-  if type(command) ~= "string" then
+local function opens_overlay(command)
+  if type(command) ~= "string" or pastes_into_focused_window[command] then
     return false
   end
 
-  for _, prefix in ipairs(launcher_prefixes) do
+  for _, prefix in ipairs(overlay_prefixes) do
     if command:sub(1, #prefix) == prefix then
       return true
     end
@@ -127,10 +128,11 @@ function o.focus_builtin_screen()
   end
 end
 
--- A launcher pressed on the MacBook's own keyboard opens on the MacBook's own
--- screen. Hyprland runs every bind matching a key press in the order they were
--- added, so this bind, scoped to the built-in keyboard, moves focus before the
--- launcher bind runs. Other keyboards only match the launcher bind.
+-- A menu or panel pressed on the MacBook's own keyboard opens on the MacBook's
+-- own screen; apps keep opening on the focused screen. Hyprland runs every bind
+-- matching a key press in the order they were added, so this bind, scoped to the
+-- built-in keyboard, moves focus before the menu bind runs. Other keyboards only
+-- match the menu bind.
 local function bind_builtin_screen_focus(keys)
   if apple_silicon == nil then
     apple_silicon = o.shell_succeeds("omarchy-hw-apple-silicon")
@@ -150,7 +152,7 @@ function o.bind(keys, description, dispatcher, options)
 
   dispatcher = command_from(dispatcher, description)
 
-  if opens_something(dispatcher) and not opts.locked then
+  if opens_overlay(dispatcher) and not opts.locked then
     bind_builtin_screen_focus(keys)
   end
 
