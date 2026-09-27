@@ -35,12 +35,16 @@ class Audio:
         self.next_id = 100; self.auto_input = False; self.initial_input = default; self.no_dsp = False
         self.carries_signal = True; self.probes = []; self.probe_choice = None
         self.notices = []; self.feeds = {m.MAPPING}; self.routes = 0; self.route_choice = None
+        self.stamp = None; self.restarts = 0; self.link_error = 'link rejected after partial creation'
+        self.cards = [dict(name='alsa_card.platform-sound', active_profile='HiFi')]
+    def restart_session_manager(self): self.restarts += 1
     def objects(self, kind):
         if self.fail_query: raise RuntimeError('live Pulse query failed')
         if kind == 'sources':
             legacy = [copy.deepcopy(self.legacy[1])] if self.legacy else []
             return ([] if self.no_dsp else [obj(DSP)]) + [obj('usb-mic')] + ([copy.deepcopy(self.mapping)] if self.existing else []) + legacy
         if kind == 'sinks': return [obj('speakers')] + ([copy.deepcopy(self.legacy[0])] if self.legacy else [])
+        if kind == 'cards': return copy.deepcopy(self.cards)
         raise AssertionError(kind)
     def modules(self):
         return [module for module in (self.module, LEGACY_MODULE if self.legacy else None) if module]
@@ -73,7 +77,7 @@ class Audio:
             if args[1] == '-d': self.linked.pop(int(args[2])); return ''
             input_ = int(args[-1]); self.next_id += 1
             self.linked[self.next_id] = (input_, json.loads(args[4])[m.OWNER])
-            if self.fail_link == input_: raise RuntimeError('link rejected after partial creation')
+            if self.fail_link == input_: raise RuntimeError(self.link_error)
             return ''
         assert args[0] == 'pactl', args
         command = args[1]
@@ -326,7 +330,7 @@ with tempfile.TemporaryDirectory() as temporary:
                 self.calls.append(args); return ''
             return super().run(*args)
     def lost(inputs=(usb, other)):
-        m.outage.update(since=None, notified=False)
+        m.outage.update(since=None, notified=False, repaired=False)
         audio = LostDsp(True, m.MAPPING); audio.linked = {90: (21, 'existing'), 91: (22, 'existing')}
         audio.mapping = obj(m.MAPPING, 65536, False)
         audio.inputs = [dict(item) for item in inputs]; audio.no_dsp = True
@@ -345,10 +349,24 @@ with tempfile.TemporaryDirectory() as temporary:
         assert audio.default == expected, audio.default
         assert marker(saved) == (None if expected == m.MAPPING else expected)
         assert not audio.notices and m.outage_due() is not None, 'a fresh loss is not announced yet'
+        # A lasting loss first restarts WirePlumber (#1028 leaves the rebuilt
+        # graph hidden), then is announced once if it outlasts that too.
         with mock.patch.object(m.time, 'monotonic', return_value=later):
             deferred(audio, saved); deferred(audio, saved)
-        assert len(audio.notices) == 1 and audio.notices[0][-1] == 'omarchy-restart-audio', 'one notice per lasting outage'
+        assert audio.restarts == 1 and not audio.notices, 'a lasting loss restarts WirePlumber once before any notice'
+        assert m.recheck['at'] is not None, 'a repair schedules a look at the rebuilt graph'
+        m.recheck['at'] = None
+        with mock.patch.object(m.time, 'monotonic', return_value=later + m.OUTAGE_GRACE + 1):
+            deferred(audio, saved); deferred(audio, saved)
+        assert audio.restarts == 1 and len(audio.notices) == 1 and audio.notices[0][-1] == 'omarchy-restart-audio', 'one notice per lasting outage'
         assert m.outage_due() is None
+    # A built-in card the user switched off is announced, never "repaired".
+    audio = lost(); audio.cards[0]['active_profile'] = 'off'; saved = state()
+    deferred(audio, saved)
+    with mock.patch.object(m.time, 'monotonic', return_value=later):
+        deferred(audio, saved)
+    assert audio.restarts == 0 and len(audio.notices) == 1, 'a disabled card is not a lost graph'
+    audio.cards[0]['active_profile'] = 'HiFi'
     audio.no_dsp = False
     m.reconcile(audio, saved)
     assert audio.default == m.MAPPING and audio.probes == [m.MAPPING] and marker(saved) is None
@@ -422,7 +440,7 @@ with tempfile.TemporaryDirectory() as temporary:
     audio.no_dsp = False; audio.probe_choice = 'other-mic'
     m.reconcile(audio, saved)
     assert audio.default == 'other-mic' and marker(saved) is None
-    m.outage.update(since=None, notified=False)
+    m.outage.update(since=None, notified=False, repaired=False)
     for selected in (DSP, 'usb-mic', ''):
         for failure in (False, True):
             audio = Audio(default=selected); audio.auto_input = True
@@ -567,6 +585,46 @@ with tempfile.TemporaryDirectory() as temporary:
         assert properties.startswith("sink_properties='device.description=\"" + name + "\" ") and properties.endswith("'"), properties
         assert 'AsahiMicrophone' not in properties and m.OWNER + '=' in properties
         assert m.owned(audio.module, 'Audio/Source/Virtual'), 'the quoted name must not hide the mapping from its owner'
+# WirePlumber's stale hidden ids (#1028, seen after a re-login) make pw-link
+# fail with EPERM: the mapper restarts WirePlumber so the next event relinks,
+# at most once per interval however often the links keep failing. Other link
+# failures never restart it.
+with tempfile.TemporaryDirectory() as temporary:
+    stamp = Path(temporary) / 'run/omarchy-asahi-mic.repaired'
+    refused = 'pw-link -L: failed to link ports: Operation not permitted'
+    for attempt in range(3):
+        audio = Audio(); audio.stamp = stamp; audio.fail_link = 21; audio.link_error = refused
+        try: m.reconcile(audio, Path(temporary) / 'state.json')
+        except RuntimeError as error: assert 'Operation not permitted' in str(error)
+        else: raise AssertionError('a refused link must fail the mapping')
+        assert audio.restarts == (1 if attempt == 0 else 0), (attempt, audio.restarts)
+        assert not audio.linked, 'a refused mapping is rolled back'
+    assert m.recheck['at'] is not None; m.recheck['at'] = None
+    stamp.write_text(repr(time.monotonic() - m.REPAIR_INTERVAL - 1))
+    audio = Audio(); audio.stamp = stamp; audio.fail_link = 21; audio.link_error = refused
+    try: m.reconcile(audio, Path(temporary) / 'state.json')
+    except RuntimeError: pass
+    assert audio.restarts == 1, 'the repair is allowed again after its interval'
+    audio = Audio(); audio.stamp = Path(temporary) / 'other'; audio.fail_link = 21
+    try: m.reconcile(audio, Path(temporary) / 'state.json')
+    except RuntimeError: pass
+    assert audio.restarts == 0, 'other link failures never restart WirePlumber'
+# pw-link's EPERM is recognised in English whatever the session's language.
+with mock.patch.object(m.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '', '')) as run, \
+        mock.patch.dict(os.environ, {'LC_ALL': 'de_DE.UTF-8', 'LANG': 'de_DE.UTF-8'}):
+    m.Audio().run('pw-link', '-L', '1', '2')
+    assert run.call_args.kwargs['env']['LC_ALL'] == 'C' and run.call_args.kwargs['env']['LANG'] == 'de_DE.UTF-8'
+# A restart that cannot run leaves the refused-link error as the mapping's.
+with tempfile.TemporaryDirectory() as temporary:
+    class Unrestartable(Audio):
+        def restart_session_manager(self): raise subprocess.CalledProcessError(1, 'systemctl')
+    m.recheck["at"] = None
+    audio = Unrestartable(); audio.stamp = Path(temporary) / 'stamp'; audio.fail_link = 21
+    audio.link_error = 'pw-link -L: failed to link ports: Operation not permitted'
+    try: m.reconcile(audio, Path(temporary) / 'state.json')
+    except RuntimeError as error: assert 'Operation not permitted' in str(error), error
+    else: raise AssertionError('a refused link must fail the mapping')
+    assert m.recheck['at'] is None, 'no re-check follows a restart that did not happen'
 unit = (root / 'vendor/systemd/user/omarchy-asahi-mic.service').read_text()
 assert '--watch' in unit and 'PartOf=graphical-session.target' in unit
 assert 'PartOf=pipewire.service' not in unit and 'After=graphical-session.target' not in unit
