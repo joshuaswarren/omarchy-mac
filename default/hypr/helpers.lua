@@ -117,6 +117,14 @@ local function opens_overlay(command)
   return false
 end
 
+function o.apple_silicon()
+  if apple_silicon == nil then
+    apple_silicon = o.shell_succeeds("omarchy-hw-apple-silicon")
+  end
+
+  return apple_silicon
+end
+
 function o.focus_builtin_screen()
   for _, monitor in ipairs(hl.get_monitors()) do
     if monitor.name:match("^eDP%-") then
@@ -134,11 +142,7 @@ end
 -- built-in keyboard, moves focus before the menu bind runs. Other keyboards only
 -- match the menu bind.
 local function bind_builtin_screen_focus(keys)
-  if apple_silicon == nil then
-    apple_silicon = o.shell_succeeds("omarchy-hw-apple-silicon")
-  end
-
-  if apple_silicon then
+  if o.apple_silicon() then
     hl.bind(keys, o.focus_builtin_screen, { device = { inclusive = true, list = builtin_keyboards } })
   end
 end
@@ -214,4 +218,43 @@ function o.window(match, rules)
   end
 
   hl.window_rule(rules)
+end
+
+local modifier_names = { "SHIFT", "CAPS", "CTRL", "CONTROL", "ALT", "MOD1", "MOD2", "MOD3", "SUPER", "WIN", "LOGO", "MOD4", "META", "MOD5" }
+
+-- Hyprland reads a modifier out of any string that contains one's name, so
+-- "NONE" or "" is no modifier at all.
+local function holds_modifier(mods)
+  if type(mods) ~= "string" then
+    return mods ~= nil
+  end
+
+  mods = mods:upper()
+  for _, name in ipairs(modifier_names) do
+    if mods:find(name, 1, true) then
+      return true
+    end
+  end
+
+  return false
+end
+
+-- Hyprland rejects a gesture another one already covers, and gives Lua no way
+-- to list what's registered. On a Mac, record each one so the default workspace
+-- swipe, added after the user's files, can step aside for the user's own.
+if hl and hl.gesture and not o.registered_gestures and o.apple_silicon() then
+  local register_gesture = hl.gesture
+  o.registered_gestures = {}
+
+  hl.gesture = function(gesture, ...)
+    if type(gesture) == "table" then
+      table.insert(o.registered_gestures, {
+        fingers = tonumber(gesture.fingers),
+        direction = type(gesture.direction) == "string" and gesture.direction:lower() or "",
+        modified = holds_modifier(gesture.mods),
+      })
+    end
+
+    return register_gesture(gesture, ...)
+  end
 end
