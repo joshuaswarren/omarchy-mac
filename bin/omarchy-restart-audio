@@ -4,6 +4,136 @@
 # omarchy:examples=omarchy restart audio | omarchy-restart-audio
 
 services=(wireplumber.service pipewire.service pipewire-pulse.service)
+shell_config="$OMARCHY_PATH/shell"
+suspend_offset_before=""
+
+# Quickshell 0.3.1 on Qt 6.11 can crash when PipeWire or WirePlumber goes away
+# under it (a delegate model reads a PipeWire node already deleted), and its
+# crash handler brings the shell back with a crash report window and the
+# screen locked. So audio restarts only while the screen is unlocked, with
+# the shell stopped first and started again once audio is back.
+
+# Prints the number of running shell instances, or fails if Quickshell cannot
+# tell. With none running, Quickshell answers in prose, even with -j.
+shell_instances() {
+  local listing
+
+  listing=$(timeout 5s quickshell list -p "$shell_config" --any-display -j 2>/dev/null) || return 1
+
+  if [[ $listing == "No running instances"* ]]; then
+    echo 0
+  else
+    jq -e 'if type == "array" then length else error end' <<<"$listing" 2>/dev/null
+  fi
+}
+
+# Prints why the shell must not be stopped now, or nothing if it may be.
+shell_stop_blocker() {
+  local status
+  local state
+
+  omarchy-hyprland-session-locked
+  case $? in
+    0) echo "the screen is locked"; return ;;
+    1) ;;
+    *) echo "the lock state is unknown"; return ;;
+  esac
+
+  # The compositor holds no lock and no shell answers to take one: there is no
+  # locker to lose.
+  status=$(OMARCHY_SHELL_IPC_TIMEOUT=3s omarchy-shell lock status 2>/dev/null) || return 0
+  state=$(jq -r 'if type == "object" and (.secure | not) and (.requested | not) then "unlocked" else "locked" end' <<<"$status" 2>/dev/null)
+
+  case $state in
+    unlocked) ;;
+    locked) echo "the screen is locked" ;;
+    *) echo "the lock state is unknown" ;;
+  esac
+}
+
+stop_shell() {
+  local attempt
+  local count
+
+  for (( attempt = 0; attempt < 10; attempt++ )); do
+    timeout 5s quickshell kill -p "$shell_config" --any-display >/dev/null 2>&1
+    count=$(shell_instances) && (( count == 0 )) && return 0
+  done
+
+  return 1
+}
+
+# CLOCK_BOOTTIME runs through a suspend and CLOCK_MONOTONIC does not.
+suspend_offset() {
+  python3 -c 'import time; print(time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic())'
+}
+
+# Without a shell nothing could lock the screen for a suspend in between, so
+# ask the fresh shell until it reports the lock taken.
+lock_screen() {
+  local deadline=$((SECONDS + 30))
+  local locking
+
+  while (( SECONDS < deadline )); do
+    locking=$(OMARCHY_SHELL_IPC_TIMEOUT=3s omarchy-shell lock status 2>/dev/null | jq -r '.secure or .requested' 2>/dev/null)
+    [[ $locking == "true" ]] && return 0
+    OMARCHY_SHELL_IPC_TIMEOUT=3s omarchy-shell lock lock >/dev/null 2>&1
+    sleep 0.5
+  done
+
+  return 1
+}
+
+start_shell() {
+  local attempt
+  local offset
+
+  for (( attempt = 0; attempt < 3; attempt++ )); do
+    omarchy-restart-shell && break
+    sleep 2
+  done
+
+  offset=$(suspend_offset)
+  if awk -v before="$suspend_offset_before" -v after="$offset" 'BEGIN { exit !(after - before > 5) }'; then
+    lock_screen || echo "The screen could not be locked after a suspend during the audio restart." >&2
+  fi
+}
+
+bring_back_shell() {
+  trap '' INT TERM HUP
+  start_shell
+}
+
+prepare_shell() {
+  local instances
+  local blocker
+
+  if ! instances=$(shell_instances); then
+    echo "Not restarting audio: Quickshell cannot tell whether the Omarchy shell is running." >&2
+    exit 1
+  fi
+
+  (( instances == 0 )) && return
+
+  blocker=$(shell_stop_blocker)
+  if [[ -n $blocker ]]; then
+    echo "Not restarting audio while $blocker: the Omarchy shell could crash. Unlock the screen and try again." >&2
+    exit 1
+  fi
+
+  suspend_offset_before=$(suspend_offset)
+  # Closing the terminal must not strand the desktop without its shell.
+  trap bring_back_shell EXIT
+  trap '' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  echo -e "Stopping the Omarchy shell while audio restarts...\n"
+  if ! stop_shell; then
+    echo "Not restarting audio: the Omarchy shell could not be stopped." >&2
+    exit 1
+  fi
+}
 
 restart_audio_services() {
   echo -e "Restarting audio services...\n"
@@ -210,6 +340,7 @@ if omarchy-hw-apple-silicon && omarchy-cmd-present omarchy-audio-asahi-mic-map; 
     echo "Could not save microphone mapping gain before audio recovery." >&2
   fi
 fi
+prepare_shell
 restart_audio_services || true
 
 if ! wpctl_healthy; then

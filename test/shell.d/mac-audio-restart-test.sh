@@ -18,13 +18,14 @@ case $name in
       *) exit 0 ;;
     esac ;;
   wpctl|sleep) exit 0 ;;
+  quickshell) echo 'No running instances for "/usr/share/omarchy/shell/shell.qml"' ;;
 esac
 STUB
 chmod +x "$work/bin/fixture"
-for name in omarchy-cmd-present omarchy-hw-apple-silicon omarchy-audio-asahi-mic-map systemctl wpctl sleep; do
+for name in omarchy-cmd-present omarchy-hw-apple-silicon omarchy-audio-asahi-mic-map systemctl wpctl sleep quickshell; do
   ln -s fixture "$work/bin/$name"
 done
-export CALLS="$work/calls" PATH="$work/bin:$PATH"
+export CALLS="$work/calls" PATH="$work/bin:$PATH" OMARCHY_PATH=/usr/share/omarchy
 run_case() {
   : >"$CALLS"
   env "$@" "$ROOT/bin/omarchy-restart-audio" >"$work/output" 2>&1
