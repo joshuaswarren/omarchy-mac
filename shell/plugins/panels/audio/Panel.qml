@@ -52,6 +52,8 @@ Panel {
         var name = n.name || ""
         if (name === "quickshell") continue
         if (appleHost && Model.asahiSourceHidden(name, asahiMicMapped)) continue
+        // A Mac's headset jack input stays listed with nothing plugged in.
+        if (appleHost && sourceAvailability[name] === false) continue
         list.push(n)
       }
     }
@@ -73,6 +75,7 @@ Panel {
   }
 
   property var sinkAvailability: ({})
+  property var sourceAvailability: ({})
   property bool sinkAvailabilityLoaded: false
 
   // Identify true playback streams without reading node.properties here:
@@ -639,6 +642,15 @@ Panel {
   }
 
   Process {
+    id: sourceAvailabilityProc
+    command: ["omarchy-audio-sink-availability", "sources"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.sourceAvailability = Model.parseSinkAvailability(text)
+    }
+  }
+
+  Process {
     id: volumeSinkProc
     command: ["omarchy-audio-output-sink"]
     stdout: StdioCollector {
@@ -652,7 +664,10 @@ Panel {
     running: root.opened
     repeat: true
     triggeredOnStart: true
-    onTriggered: if (!sinkAvailabilityProc.running) sinkAvailabilityProc.running = true
+    onTriggered: {
+      if (!sinkAvailabilityProc.running) sinkAvailabilityProc.running = true
+      if (root.appleHost && !sourceAvailabilityProc.running) sourceAvailabilityProc.running = true
+    }
   }
 
   // Runs whether or not the panel is open: the bar shows and scrolls the output

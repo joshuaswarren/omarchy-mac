@@ -30,7 +30,11 @@ ROUTE_CLIENT = 'omarchy-asahi-mic-route'
 DSP = re.compile(r'effect_output\.j[0-9]+-mic')
 MODEL = Path('/proc/device-tree/model')
 OUTAGE_GRACE = 10.0
-outage = dict(since=None, notified=False)
+REPAIR_INTERVAL = 300.0
+outage = dict(since=None, notified=False, repaired=False)
+# After WirePlumber is restarted the rebuilt graph may appear before the event
+# subscription is listening, so the watcher looks again shortly anyway.
+recheck = dict(at=None)
 
 
 class Deferred(Exception):
@@ -38,9 +42,20 @@ class Deferred(Exception):
 
 
 class Audio:
+    stamp = None
+
+    def restart_session_manager(self):
+        # In that state WirePlumber ignores SIGTERM until systemd's stop
+        # timeout (90 s without audio), so it is killed and started again.
+        for command in (('kill', '--signal=SIGKILL'), ('start', '--no-block')):
+            subprocess.run(['systemctl', '--user', *command, 'wireplumber.service'],
+                           check=True, capture_output=True, timeout=10)
+
     def run(self, *args):
+        # Errors are matched in English (pw-link's EPERM below).
         try:
-            return subprocess.run(args, check=True, capture_output=True, text=True, timeout=5).stdout.strip()
+            return subprocess.run(args, check=True, capture_output=True, text=True, timeout=5,
+                                  env=dict(os.environ, LC_ALL='C')).stdout.strip()
         except subprocess.CalledProcessError as error:
             raise RuntimeError(' '.join(args[:2]) + ': ' + error.stderr.strip()) from error
 
@@ -312,11 +327,55 @@ def leave_mapping(audio, state, sources, original_input):
             path.write_text(inputs[0])
 
 
+def repair_graph(audio, reason):
+    # WirePlumber 0.5 (wireplumber#1028) keeps the ids of a DSP graph it tore
+    # down (a logout, a card profile change) in its hidden list and hides them
+    # from every later client, so the rebuilt microphone graph stays hidden or
+    # refuses the mapping's links until WirePlumber restarts. Restart it, at
+    # most once every few minutes whatever keeps failing. The stamp holds the
+    # boot-relative time of the last attempt, shared by every mapper process.
+    if audio.stamp is not None:
+        try:
+            if 0 <= time.monotonic() - float(audio.stamp.read_text()) < REPAIR_INTERVAL:
+                return False
+        except (OSError, ValueError):
+            pass
+        audio.stamp.parent.mkdir(parents=True, exist_ok=True)
+        audio.stamp.write_text(repr(time.monotonic()))
+    print('Restarting WirePlumber: ' + reason, file=sys.stderr, flush=True)
+    try:
+        audio.restart_session_manager()
+    except (OSError, subprocess.SubprocessError) as error:
+        print('Could not restart WirePlumber: ' + str(error), file=sys.stderr, flush=True)
+        return False
+    recheck['at'] = time.monotonic() + 3.0
+    return True
+
+
+def card_disabled(audio):
+    # A built-in card the user switched off is no lost graph to repair.
+    try:
+        cards = audio.objects('cards')
+    except Exception:
+        return False
+    return any(str(card.get('name', '')).startswith('alsa_card.platform-') and card.get('active_profile') == 'off'
+               for card in cards)
+
+
 def outage_due():
-    # Seconds until a pending lost-array notice is due, for the watcher's wait.
-    if outage['since'] is None or outage['notified']:
+    # Seconds until a pending lost-array notice or post-repair look is due, for
+    # the watcher's wait.
+    due = []
+    if outage['since'] is not None and not outage['notified']:
+        due.append(outage['since'] + OUTAGE_GRACE)
+    if recheck['at'] is not None:
+        if recheck['at'] <= time.monotonic():
+            recheck['at'] = None
+        else:
+            due.append(recheck['at'])
+    if not due:
         return None
-    return max(0.1, outage['since'] + OUTAGE_GRACE - time.monotonic())
+    return max(0.1, min(due) - time.monotonic())
 
 
 def description():
@@ -350,15 +409,20 @@ def reconcile(audio, state, save_only=False, checked=None):
         if mapped:
             # A card or audio restart rebuilds the array within seconds; only a
             # lasting loss is worth telling the user about, once.
+            # WirePlumber is restarted once first: a graph it left hidden
+            # (#1028) is the usual lasting loss.
             if outage['since'] is None:
                 outage['since'] = time.monotonic()
             elif not outage['notified'] and time.monotonic() - outage['since'] >= OUTAGE_GRACE:
-                outage['notified'] = True
-                audio.notify('Built-in microphone unavailable', 'Click to restart audio', 'omarchy-restart-audio')
+                if not outage['repaired'] and not card_disabled(audio) and repair_graph(audio, 'the Asahi DSP microphone is missing'):
+                    outage.update(since=time.monotonic(), repaired=True)
+                else:
+                    outage['notified'] = True
+                    audio.notify('Built-in microphone unavailable', 'Click to restart audio', 'omarchy-restart-audio')
         else:
-            outage.update(since=None, notified=False)
+            outage.update(since=None, notified=False, repaired=False)
         raise Deferred('No Asahi DSP microphone is present; user service will retry if an array appears')
-    outage.update(since=None, notified=False)
+    outage.update(since=None, notified=False, repaired=False)
     fallback = fallback_path(state)
     claimed = claim(state)
     # A muted fallback keeps its claim: the array never unmutes capture. The
@@ -500,6 +564,9 @@ def reconcile(audio, state, save_only=False, checked=None):
         # by PulseAudio, or restoring a default that this invocation changed.
         for action in (restore_changed_input, remove_links, remove_module):
             cleanup(action)
+        error = sys.exc_info()[1]
+        if isinstance(error, RuntimeError) and str(error).startswith('pw-link') and 'Operation not permitted' in str(error):
+            repair_graph(audio, 'it refused the microphone mapping links')
         raise
     if problem:
         # The mapping stays so it is not rebuilt on every event; only the
@@ -639,6 +706,7 @@ def main():
     runtime = Path(os.environ.get('XDG_RUNTIME_DIR', '/run/user/' + str(os.getuid())))
     state = Path(os.environ.get('XDG_STATE_HOME', str(Path.home() / '.local/state'))) / 'omarchy/asahi-mic-gain.json'
     checked = set()
+    Audio.stamp = runtime / 'omarchy-asahi-mic.repaired'
     operation = lambda: run_once(Audio(), runtime, state, args.save_state, checked)
     if args.watch:
         # Let a service stop unwind through supervise so the subscriber exits too.
