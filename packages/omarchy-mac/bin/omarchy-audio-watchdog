@@ -43,7 +43,9 @@ SHELL_STARTS = 3
 # --repair exit codes besides 0 (restarted) and 1 (the restart failed).
 DEFERRED = 75
 EXHAUSTED = 76
-MANUAL = ('omarchy-audio-watchdog', '--repair', 'stack', '--manual')
+# The notice's click runs from the shell, which the repair stops: run it as a
+# unit of its own.
+MANUAL = ('systemd-run', '--user', '--quiet', '--collect', 'omarchy-audio-watchdog', '--repair', 'stack', '--manual')
 last_said = dict(message=None)
 
 
@@ -152,8 +154,11 @@ class System:
         return len(instances) if isinstance(instances, list) else None
 
     def stop_shell(self):
-        # 'none' no shell ran, 'stopped', or 'failed' (one is still there).
+        # 'none' no shell ran, 'stopped', 'failed' (one is still there), or
+        # 'unknown' (Quickshell cannot tell, so nothing was touched).
         count = self.shell_instances()
+        if count is None:
+            return 'unknown'
         if count == 0:
             return 'none'
         for _ in range(10):
@@ -167,7 +172,21 @@ class System:
         return result is not None and result.returncode == 0
 
     def lock_screen(self):
-        self.run('omarchy-shell', 'lock', 'lock', timeout=10)
+        # A fresh shell answers before its lock plugin loads and may refuse an
+        # early request: ask until it reports the lock taken, as
+        # omarchy-restart-shell does.
+        deadline = self.monotonic() + 30.0
+        while self.monotonic() < deadline:
+            status = self.output('omarchy-shell', 'lock', 'status', timeout=3)
+            try:
+                lock = json.loads(status or '')
+            except ValueError:
+                lock = None
+            if isinstance(lock, dict) and (lock.get('secure') or lock.get('requested')):
+                return True
+            self.run('omarchy-shell', 'lock', 'lock', timeout=5)
+            self.sleep(0.5)
+        return False
 
     def restart_stack(self):
         # A wedged WirePlumber ignores SIGTERM until systemd's 90 s stop
@@ -268,8 +287,8 @@ def bring_back_shell(system, suspended_from):
     else:
         say('The shell did not come back after the audio restart')
     # Without a shell nothing could lock the screen for a suspend in between.
-    if system.boottime() - system.monotonic() - suspended_from > RESUME_JUMP:
-        system.lock_screen()
+    if system.boottime() - system.monotonic() - suspended_from > RESUME_JUMP and not system.lock_screen():
+        say('The screen could not be locked after a suspend during the audio restart')
 
 
 def repair(system, kind, reason, manual=False):
@@ -296,13 +315,18 @@ def repair(system, kind, reason, manual=False):
         if why and not manual:
             say('Not restarting audio: ' + why)
             return code
+        # Every attempt counts against the budget, even one the shell stops,
+        # so nothing kills and restarts the shell over and over.
+        record(system, kind, now)
         suspended_from = system.boottime() - system.monotonic()
         shell = system.stop_shell()
+        if shell == 'unknown':
+            say('Not restarting audio: the shell state is unknown')
+            return DEFERRED
         if shell == 'failed':
             say('Not restarting audio: the shell could not be stopped')
             bring_back_shell(system, suspended_from)
             return DEFERRED
-        record(system, kind, now)
         say(('Restarting the audio stack: ' if kind == 'stack' else 'Restarting WirePlumber: ') + reason)
         try:
             done = recover(system, kind)
@@ -417,6 +441,9 @@ def main():
     parser.add_argument('--manual', action='store_true')
     parser.add_argument('--reason', default='asked by the microphone mapper')
     args = parser.parse_args()
+    if not os.environ.get('OMARCHY_PATH'):
+        print('OMARCHY_PATH is not set; the Omarchy session environment is missing', file=sys.stderr)
+        return DEFERRED if args.repair else 0
     system = System()
     if args.repair:
         return repair(system, args.repair, 'restart requested by the user' if args.manual else args.reason, args.manual)

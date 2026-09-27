@@ -34,7 +34,8 @@ REPAIR_INTERVAL = 300.0
 DEFERRED = 75
 # Restarting audio stops and restarts the shell around it (a shell under a
 # vanishing PipeWire crashes): the watchdog does that, a plain restart not.
-RESTART_AUDIO = ('omarchy-audio-watchdog', '--repair', 'stack', '--manual')
+# The click runs from the shell, so the repair runs as a unit of its own.
+RESTART_AUDIO = ('systemd-run', '--user', '--quiet', '--collect', 'omarchy-audio-watchdog', '--repair', 'stack', '--manual')
 outage = dict(since=None, notified=False, repaired=False)
 # After WirePlumber is restarted the rebuilt graph may appear before the event
 # subscription is listening, so the watcher looks again shortly anyway.
@@ -56,7 +57,7 @@ class Audio:
         # during a logout, under the lock screen or while another repair runs.
         # It runs as its own unit, so a mapper that stops or gives up waiting
         # never leaves the shell stopped. Returns its exit code.
-        return subprocess.run(['systemd-run', '--user', '--wait', '--quiet', '--collect', '--unit=omarchy-audio-repair',
+        return subprocess.run(['systemd-run', '--user', '--wait', '--quiet', '--collect', '--unit=omarchy-audio-repair-%d' % os.getpid(),
                                '--description=Restart WirePlumber for the microphone mapping',
                                'omarchy-audio-watchdog', '--repair', 'wireplumber', '--reason', reason],
                               stdin=subprocess.DEVNULL, capture_output=True, timeout=300).returncode

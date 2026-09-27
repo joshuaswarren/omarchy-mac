@@ -686,7 +686,7 @@ for code in (0, 75, 76, 1):
     with mock.patch.object(m.subprocess, 'run', return_value=subprocess.CompletedProcess([], code, b'', b'')) as call:
         assert m.Audio().restart_session_manager('links refused') == code
         args = call.call_args.args[0]
-        assert args[:3] == ['systemd-run', '--user', '--wait'] and '--unit=omarchy-audio-repair' in args, args
+        assert args[:3] == ['systemd-run', '--user', '--wait'] and '--unit=omarchy-audio-repair-%d' % os.getpid() in args, args
         assert args[-5:] == ['omarchy-audio-watchdog', '--repair', 'wireplumber', '--reason', 'links refused'], args
 unit = (root / 'vendor/systemd/user/omarchy-asahi-mic.service').read_text()
 assert '--watch' in unit and 'PartOf=graphical-session.target' in unit

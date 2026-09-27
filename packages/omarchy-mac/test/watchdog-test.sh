@@ -111,7 +111,11 @@ fake = Fake(); fake.shell_running = False
 assert w.repair(fake, 'stack', 'test') == 0 and fake.order == ['stop shell', 'restart stack'], 'no shell is started that was not running'
 fake = Fake(); fake.shell_stops = False
 assert w.repair(fake, 'stack', 'test') == w.DEFERRED and fake.stack_restarts == 0, 'audio never restarts under a shell that would not stop'
-assert fake.order == ['stop shell', 'start shell'] and not (fake.runtime / 'omarchy-audio-repairs').exists()
+assert fake.order == ['stop shell', 'start shell'] and (fake.runtime / 'omarchy-audio-repairs').exists()
+fake.boot += 5
+assert w.repair(fake, 'stack', 'test') == w.DEFERRED and fake.order == ['stop shell', 'start shell'], 'a failed stop counts: the shell is not killed again at once'
+fake = Fake(); fake.stop_shell = lambda: 'unknown'
+assert w.repair(fake, 'stack', 'test') == w.DEFERRED and fake.stack_restarts == 0 and not fake.order, 'an unknown shell is not touched'
 fake = Fake(); fake.shell_result = False
 assert w.repair(fake, 'stack', 'test') == 0 and fake.shell_starts == w.SHELL_STARTS, 'a shell that does not come back is tried again'
 fake = Fake()
@@ -262,7 +266,7 @@ for locked, status, expected in ((1, free, None), (0, free, 'the screen is locke
         assert system.lock_state() == expected, (locked, status)
 with mock.patch.dict(os.environ, {'OMARCHY_PATH': '/usr/share/omarchy'}):
     for listings, result, kills in ((['[]'], 'none', 0), (['[{}]', '[{}, {}]', '[{}]', '[]'], 'stopped', 3),
-                                    (['[{}]'] * 11, 'failed', 10), ([None], 'failed', 10)):
+                                    (['[{}]'] * 11, 'failed', 10), ([None], 'unknown', 0), (['{}'], 'unknown', 0)):
         replies = iter(listings)
         calls = []
         def run(self, *args, timeout=10, env=None):
@@ -275,6 +279,23 @@ with mock.patch.dict(os.environ, {'OMARCHY_PATH': '/usr/share/omarchy'}):
             assert system.stop_shell() == result, (listings, result)
         assert sum(call[1] == 'kill' for call in calls) == kills, (listings, calls)
         assert all(call[2:4] == ('-p', '/usr/share/omarchy/shell') for call in calls)
+# Relocking asks until the new shell reports the lock taken, and gives up
+# after half a minute.
+clock = [0.0]
+with mock.patch.object(w.System, 'monotonic', lambda self: clock[0]), \
+        mock.patch.object(w.System, 'sleep', lambda self, seconds: clock.__setitem__(0, clock[0] + seconds)):
+    replies = iter([None, '{"secure":false,"requested":false}', '{"requested":true}'])
+    asked = []
+    def run(self, *args, timeout=10, env=None):
+        if args[2] == 'status':
+            reply = next(replies)
+            return None if reply is None else subprocess.CompletedProcess(args, 0, reply, '')
+        asked.append(args); return subprocess.CompletedProcess(args, 0, '', '')
+    with mock.patch.object(w.System, 'run', run):
+        assert system.lock_screen() and len(asked) == 2, asked
+    clock[0] = 0.0
+    with mock.patch.object(w.System, 'run', return_value=None):
+        assert not system.lock_screen() and clock[0] >= 30
 for states, expected in (('active\nactive\nactive', 'active'), ('active\nfailed\nactive', 'failed'),
                          ('active\ninactive\nactive', 'other'), ('failed\nactivating\nactive', 'other')):
     with mock.patch.object(w.System, 'run', return_value=subprocess.CompletedProcess([], 3, states, '')):
