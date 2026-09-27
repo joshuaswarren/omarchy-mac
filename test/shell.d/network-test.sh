@@ -91,19 +91,21 @@ assertDeepEqual(
 )
 assertEqual(network.connectionIcon('wifi', 80), network.wifiIconFor(80), 'network maps wifi icon from signal')
 
-// A connected wired link without the internet route (a Thunderbolt bridge to
-// another Mac, link-local or never-default) must not take the bar from Wi-Fi.
-assertEqual(network.barKind(true, true, 'wlan0', 'wlan0'), 'wifi', 'network bar follows Wi-Fi when the internet route leaves via Wi-Fi')
-assertEqual(network.barKind(true, true, 'enp1s0', 'wlan0'), 'ethernet', 'network bar keeps Ethernet when it owns the internet route')
-assertEqual(network.barKind(true, true, '', 'wlan0'), 'ethernet', 'network bar keeps the wired preference until the route is known')
-assertEqual(network.barKind(true, true, 'tailscale0', 'wlan0'), 'ethernet', 'network bar keeps the wired preference behind a VPN route')
-assertEqual(network.barKind(true, false, 'wlan0', 'wlan0'), 'ethernet', 'network bar shows a lone wired link even without the route')
-assertEqual(network.barKind(false, true, '', 'wlan0'), 'wifi', 'network bar shows Wi-Fi alone without route data')
+// A connected wired link that NetworkManager doesn't make primary (a
+// Thunderbolt bridge to another Mac, link-local or never-default) must not
+// take the bar from Wi-Fi.
+assertEqual(network.barKind(true, true, 'wlan0', 'wlan0'), 'wifi', 'network bar follows Wi-Fi when it is the primary connection')
+assertEqual(network.barKind(true, true, 'enp1s0', 'wlan0'), 'ethernet', 'network bar keeps Ethernet when it is the primary connection')
+assertEqual(network.barKind(true, true, '', 'wlan0'), 'ethernet', 'network bar keeps the wired preference until the primary is known')
+assertEqual(network.barKind(true, false, 'wlan0', 'wlan0'), 'ethernet', 'network bar shows a lone wired link even when stale data names Wi-Fi')
+assertEqual(network.barKind(false, true, '', 'wlan0'), 'wifi', 'network bar shows Wi-Fi alone without primary data')
 assertEqual(network.barKind(false, false, 'wlan0', 'wlan0'), 'disconnected', 'network bar shows disconnected with nothing up')
 assertEqual(network.barKind(true, false, '', ''), 'ethernet', 'network bar shows Ethernet on a wired-only machine')
-assert(/readonly property string kind: Model\.barKind\([\s\S]{0,120}routeDevice, wifiDevice \? wifiDevice\.name/.test(panelSource), 'network bar kind uses the route device')
-assert(/id: routeProc[\s\S]{0,80}"omarchy-network-status", "--route-device"/.test(panelSource), 'network looks up the route device through omarchy-network-status')
-assert(/onRouteKeyChanged: routeCheck\.restart\(\)/.test(panelSource), 'network re-checks the route when devices or connectivity change')
+assert(/readonly property string kind: Model\.barKind\([\s\S]{0,120}primaryDevice, wifiDevice \? wifiDevice\.name/.test(panelSource), 'network bar kind uses the primary device')
+assert(/id: primaryProc[\s\S]{0,80}"omarchy-network-status", "--primary-device"/.test(panelSource), 'network looks up the primary device through omarchy-network-status')
+assert(/onPrimaryKeyChanged: primaryCheck\.restart\(\)/.test(panelSource), 'network re-checks the primary when devices or connectivity change')
+assert(/command: \["nmcli", "monitor"\][\s\S]{0,160}primaryCheck\.restart\(\)/.test(panelSource), 'network re-checks the primary on NetworkManager events')
+assert(!/nmMonitor\.running = root\./.test(panelSource) && !/running: root\.networkManagerAvailable/.test(panelSource), 'network starts the NetworkManager monitor imperatively instead of mixing a binding with restarts')
 assertEqual(network.formatHeaderSpeed('1000'), '1gbit', 'network formats gigabit speed')
 assertEqual(network.formatHeaderSpeed('2500'), '2.5gbit', 'network formats fractional gigabit speed')
 assertEqual(network.formatHeaderFreq('2462'), '2.4ghz', 'network formats 2.4GHz wifi band')
@@ -311,9 +313,19 @@ JS
 
 stage=$(mktemp -d)
 trap 'rm -rf -- "$stage"' EXIT
-printf '#!/bin/bash\n[[ $* == "route get 1.1.1.1" ]] || exit 1\nprintf "%%s\\n" "$NETWORK_TEST_ROUTE"\n' > "$stage/ip"
-chmod +x "$stage/ip"
-route_device() { NETWORK_TEST_ROUTE=$1 PATH="$stage:$PATH" "$ROOT/bin/omarchy-network-status" --route-device; }
-[[ $(route_device "1.1.1.1 via 192.168.0.1 dev wlan0 src 192.168.0.106 uid 1000") == wlan0 ]] || fail "network-status prints the internet route device"
-[[ -z $(route_device "") ]] || fail "network-status prints nothing without an internet route"
-pass "network-status reports the internet route device"
+cat > "$stage/busctl" <<'SH'
+#!/bin/bash
+[[ $1 == get-property && $2 == org.freedesktop.NetworkManager ]] || exit 1
+case $4 in
+  org.freedesktop.NetworkManager) printf 'o "%s"\n' "$NETWORK_TEST_PRIMARY" ;;
+  org.freedesktop.NetworkManager.Connection.Active) printf 'ao 1 "/org/freedesktop/NetworkManager/Devices/6"\n' ;;
+  org.freedesktop.NetworkManager.Device) printf 's "wlan0"\n' ;;
+  *) exit 1 ;;
+esac
+SH
+chmod +x "$stage/busctl"
+primary_device() { NETWORK_TEST_PRIMARY=$1 PATH="$stage:$PATH" "$ROOT/bin/omarchy-network-status" --primary-device; }
+[[ $(primary_device /org/freedesktop/NetworkManager/ActiveConnection/10) == wlan0 ]] || fail "network-status prints the primary connection's interface"
+[[ -z $(primary_device /) ]] || fail "network-status prints nothing without a primary connection"
+[[ -z $(PATH="$stage:$PATH" NETWORK_TEST_PRIMARY=x "$ROOT/bin/omarchy-network-status" --primary-device 2>&1) ]] || fail "network-status ignores a malformed primary connection"
+pass "network-status reports NetworkManager's primary device"

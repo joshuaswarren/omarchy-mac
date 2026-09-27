@@ -130,13 +130,13 @@ ShellRoot {
   }
 
   // Wait out the startup lookup, then forget it so only the Thunderbolt link
-  // coming up can refill the route device.
+  // coming up can refill the primary device.
   Timer {
     id: bridgeStart
     interval: 1500
     onTriggered: {
-      test.check(panel.routeDevice === "test-wifi", "startup route lookup reports the Wi-Fi interface")
-      panel.routeDevice = ""
+      test.check(panel.primaryDevice === "test-wifi", "startup lookup reports the Wi-Fi interface")
+      panel.primaryDevice = ""
       NetworkMock.wired.connected = true
       bridgeSettle.start()
     }
@@ -144,12 +144,44 @@ ShellRoot {
   Timer { id: bridgeSettle; interval: 1500; onTriggered: test.bridgeChecks() }
 
   function bridgeChecks() {
-    check(panel.routeDevice === "test-wifi", "a device change repeats the route lookup")
-    check(panel.kind === "wifi" && panel.icon !== "󰈀" && panel.icon !== "󰈂", "a wired link without the internet route leaves the Wi-Fi icon")
-    panel.routeDevice = "test-wired"
-    check(panel.kind === "ethernet", "a wired link that owns the internet route shows Ethernet")
-    NetworkMock.wired.connected = false
-    finish()
+    check(panel.primaryDevice === "test-wifi", "a device change repeats the primary lookup")
+    check(panel.kind === "wifi" && panel.icon !== "󰈀" && panel.icon !== "󰈂", "a wired link that is not primary leaves the Wi-Fi icon")
+    // Only a NetworkManager event announces this move; no device changes.
+    Quickshell.execDetached(["network-test-primary", "test-wired"])
+    waitFor(function() { return panel.kind === "ethernet" }, "a NetworkManager event moves the bar to a primary wired link", function() {
+      waitFor(function() { return panel.testNmMonitor.running }, "the NetworkManager monitor restarts after it exits", function() {
+        Quickshell.execDetached(["network-test-primary", "test-wifi"])
+        waitFor(function() { return panel.kind === "wifi" }, "a NetworkManager event moves the bar back to Wi-Fi", function() {
+          NetworkMock.wired.connected = false
+          finish()
+        })
+      })
+    })
+  }
+
+  property var waitCondition: null
+  property string waitMessage: ""
+  property var waitNext: null
+  function waitFor(condition, message, next) {
+    waitCondition = condition
+    waitMessage = message
+    waitNext = next
+    waitPoll.tries = 0
+    waitPoll.start()
+  }
+  Timer {
+    id: waitPoll
+    property int tries: 0
+    interval: 250
+    repeat: true
+    onTriggered: {
+      if (!test.waitCondition()) {
+        if (++tries < 40) return
+        test.check(false, test.waitMessage)
+      }
+      stop()
+      test.waitNext()
+    }
   }
 
   function finish() {

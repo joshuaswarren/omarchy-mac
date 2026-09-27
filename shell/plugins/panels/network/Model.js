@@ -31,10 +31,10 @@ function connectivityState(kind, connectivity, states, checksEnabled) {
 
 // NetworkManager keeps a wired link connected even when it has no route to the
 // internet: a Thunderbolt bridge to another computer, a link-local or
-// never-default profile. Wired still wins, as it does when it owns the default
-// route, unless the routing table says internet traffic leaves via Wi-Fi.
-function barKind(wiredConnected, wifiConnected, routeDevice, wifiName) {
-  var viaWifi = wifiConnected && !!routeDevice && routeDevice === wifiName
+// never-default profile. Wired still wins, as it does when it carries the
+// primary connection, unless NetworkManager's primary connection is on Wi-Fi.
+function barKind(wiredConnected, wifiConnected, primaryDevice, wifiName) {
+  var viaWifi = wifiConnected && !!primaryDevice && primaryDevice === wifiName
   if (wiredConnected && !viaWifi) return "ethernet"
   if (wifiConnected) return "wifi"
   return "disconnected"

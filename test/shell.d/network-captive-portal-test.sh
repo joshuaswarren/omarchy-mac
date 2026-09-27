@@ -66,6 +66,7 @@ source = source.replace('  id: root', `  id: root
   property alias testMeta: heroMeta
   property alias testTitle: heroSsid
   property alias testPoll: connectivityPoll
+  property alias testNmMonitor: nmMonitor
   property alias testBarButton: button`)
 fs.writeFileSync(`${stage}/network/Panel.qml`, source)
 JS
@@ -76,15 +77,34 @@ for command in omarchy-dns omarchy-network-band; do
 done
 # Preview uses only synthetic details, never the host's SSID or addresses.
 # Normal assertions keep the details empty to exercise missing-route handling.
-printf '#!/bin/bash\nif [[ ${1:-} == --route-device ]]; then\n  echo test-wifi\nelif [[ -n ${NETWORK_TEST_PREVIEW:-} ]]; then\n  printf "type\\twifi\\niface\\ttest-wifi\\nssid\\tGuest Wi-Fi\\nip\\t192.0.2.10\\ngateway\\t192.0.2.1\\n"\nfi\n' > "$stage/bin/omarchy-network-status"
+printf '#!/bin/bash\nif [[ ${1:-} == --primary-device ]]; then\n  cat "$NETWORK_TEST_STAGE/primary"\nelif [[ -n ${NETWORK_TEST_PREVIEW:-} ]]; then\n  printf "type\\twifi\\niface\\ttest-wifi\\nssid\\tGuest Wi-Fi\\nip\\t192.0.2.10\\ngateway\\t192.0.2.1\\n"\nfi\n' > "$stage/bin/omarchy-network-status"
 chmod +x "$stage/bin/omarchy-network-status"
+# NetworkManager events come from a file the fixture appends to, so it can
+# move the primary connection without touching any Networking property.
+echo test-wifi > "$stage/primary"
+: > "$stage/nm-events"
+# Each monitor reports one event and exits, so the panel must restart it.
+cat > "$stage/bin/nmcli" <<'SH'
+#!/bin/bash
+[[ ${1:-} == monitor ]] || exit 0
+seen=$(wc -l < "$NETWORK_TEST_STAGE/nm-events")
+for _ in {1..300}; do
+  sleep 0.1
+  if (( $(wc -l < "$NETWORK_TEST_STAGE/nm-events") > seen )); then
+    echo "primary connection changed"
+    exit 0
+  fi
+done
+SH
+printf '#!/bin/bash\nprintf "%%s\\n" "$1" > "$NETWORK_TEST_STAGE/primary"\necho "primary connection changed" >> "$NETWORK_TEST_STAGE/nm-events"\n' > "$stage/bin/network-test-primary"
+chmod +x "$stage/bin/nmcli" "$stage/bin/network-test-primary"
 printf '#!/bin/bash\nprintf "%%s\\n" "$@" >> "$NETWORK_TEST_BROWSER_LOG"\n' > "$stage/bin/omarchy-launch-browser"
 chmod +x "$stage/bin/omarchy-launch-browser"
 
 # All networking and external actions are mocked; the real connection and
 # browser are never touched, and the fixture writes only to its scratch HOME.
 output=$(HOME="$stage/home" OMARCHY_PATH="$ROOT" PATH="$stage/bin:$PATH" \
-  NETWORK_TEST_BROWSER_LOG="$stage/browser.log" \
+  NETWORK_TEST_BROWSER_LOG="$stage/browser.log" NETWORK_TEST_STAGE="$stage" \
   timeout 30 quickshell -p "$stage" --no-color 2>&1) || fail "network portal fixture exits cleanly" "$output"
 [[ $output == *"RESULT pass"* ]] || fail "network portal runtime assertions pass" "$output"
 if rg -q 'RESULT fail|ReferenceError|TypeError|Error:|Unable to assign|Binding loop' <<< "$output"; then
