@@ -20,3 +20,4 @@ The network backend default follows Marcelo Alcantara's Apple Silicon integratio
 - Apple pacman templates: Marcelo Alcantara, `10df667a4` (Stage each platform's pacman repositories; Omarchy first on Apple Silicon), moved unchanged from `default/pacman/apple-silicon`.
 - `omarchy-hw-apple` alias: Scott Jones, `bea1a1ba5` (Preserve optional Apple audio and hardware detection interfaces), moved from the runtime's `bin/`; root no longer falls back to anything but the predicate in `/usr/bin`.
 - Three-finger workspace swipe: Marcelo Alcantara, omarchy-mac#629 (`25454328c`, `4ba3490a8`), moved from the runtime's `default/hypr/apple-gestures.lua` into the runtime's platform directory; the gesture registry it reads stays in the runtime's helpers, now on every platform.
+- Steam FEX launcher setup: Scott Jones, from the runtime's Steam installer branch and migration `1789522888` (`b5463029e`); the launcher itself is omarchy-pkgs' `omarchy-steam-fex`.

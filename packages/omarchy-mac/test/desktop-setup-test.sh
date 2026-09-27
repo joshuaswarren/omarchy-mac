@@ -162,3 +162,60 @@ status=0
 "$stage/usr/lib/omarchy/mac/setup-user" extra 2>/dev/null || status=$?
 (( status == 2 )) || fail 'setup-user takes no argument'
 pass 'the lifecycle entrypoints run the Mac system and user setup'
+
+# Steam under FEX: system setup installs the launcher where Steam is, and user
+# setup prepares it for a user who has Steam.
+steam_launcher="$stage/usr/lib/omarchy-mac/steam-launcher"
+[[ -x $steam_launcher ]] || fail 'the Steam launcher step is staged'
+cat >"$work/bin/pacman" <<'STUB'
+#!/bin/bash
+printf 'pacman %s OMARCHY_UPDATE_PACMAN=%s\n' "$*" "${OMARCHY_UPDATE_PACMAN:-}" >>"$CALLS"
+if [[ $1 == "-Q" ]]; then
+  [[ " ${INSTALLED_PACKAGES:-} " == *" $2 "* ]]
+else
+  exit "${PACMAN_STATUS:-0}"
+fi
+STUB
+cat >"$work/bin/omarchy-launch-steam" <<'STUB'
+#!/bin/bash
+printf 'omarchy-launch-steam %s\n' "$*" >>"$CALLS"
+STUB
+chmod +x "$work/bin/pacman" "$work/bin/omarchy-launch-steam"
+: >"$CALLS"
+"$steam_launcher"
+! grep -q '^pacman -S' "$CALLS" || fail 'no Steam, no FEX launcher'
+: >"$CALLS"
+INSTALLED_PACKAGES="steam" "$steam_launcher" >/dev/null
+grep -Fxq 'pacman -S --needed --noconfirm omarchy-steam-fex OMARCHY_UPDATE_PACMAN=1' "$CALLS" ||
+  fail 'Steam without the FEX launcher gets it from the repositories' "$(cat "$CALLS")"
+: >"$CALLS"
+INSTALLED_PACKAGES="steam omarchy-steam-fex" "$steam_launcher"
+! grep -q '^pacman -S' "$CALLS" || fail 'an installed launcher is left alone'
+if INSTALLED_PACKAGES="steam" PACMAN_STATUS=1 "$steam_launcher" >/dev/null 2>&1; then fail 'a failed launcher install fails setup'; fi
+: >"$CALLS"
+PLATFORM=generic-aarch64 INSTALLED_PACKAGES="steam" "$steam_launcher"
+! grep -q '^pacman' "$CALLS" || fail 'other platforms never get the FEX launcher'
+: >"$CALLS"
+INSTALLED_PACKAGES="steam" OMARCHY_MAC_SETUP_OFFLINE=1 "$steam_launcher"
+! grep -q '^pacman -S' "$CALLS" || fail 'an image first boot, maybe offline, downloads no Steam launcher' "$(cat "$CALLS")"
+grep -Fq '"$root/usr/lib/omarchy-mac/steam-launcher"' "$stage/usr/bin/omarchy-mac-setup-system" &&
+  grep -Fq 'OMARCHY_MAC_SETUP_OFFLINE="${1:+1}"' "$stage/usr/lib/omarchy/mac/setup-system" ||
+  fail 'system setup runs the Steam step, told whether this is an image first boot'
+pass 'system setup installs the Steam FEX launcher wherever Steam is, online and only on Apple Silicon'
+
+# User setup's live steps run only without a staging root: a copy reads the
+# staged helpers, and the Electron ones see no installed apps.
+sed 's|"$root/usr/lib/omarchy-mac/|"'"$stage"'/usr/lib/omarchy-mac/|' "$setup_user" >"$work/setup-user-live"
+chmod +x "$work/setup-user-live"
+setup_user=$work/setup-user-live
+export OMARCHY_CHROMIUM_BIN="$work/missing" OMARCHY_1PASSWORD_BIN="$work/missing" OMARCHY_CURSOR_BIN="$work/missing"
+: >"$CALLS"
+"$setup_user" >/dev/null
+! grep -q '^omarchy-launch-steam' "$CALLS" || fail 'a user without Steam is not prepared for it'
+INSTALLED_PACKAGES="steam" "$setup_user" >/dev/null
+grep -Fxq 'omarchy-launch-steam --prepare' "$CALLS" || fail "a user on a Mac with Steam installed is prepared for it" "$(cat "$CALLS")"
+: >"$CALLS"
+mkdir -p "$HOME/.local/share/Steam"
+"$setup_user" >/dev/null
+grep -Fxq 'omarchy-launch-steam --prepare' "$CALLS" || fail "a user's own Steam is prepared for the FEX launcher" "$(cat "$CALLS")"
+pass 'user setup prepares Steam for the FEX launcher where the user has Steam'
