@@ -31,10 +31,17 @@ DSP = re.compile(r'effect_output\.j[0-9]+-mic')
 MODEL = Path('/proc/device-tree/model')
 OUTAGE_GRACE = 10.0
 REPAIR_INTERVAL = 300.0
+DEFERRED = 75
+# Restarting audio stops and restarts the shell around it (a shell under a
+# vanishing PipeWire crashes): the watchdog does that, a plain restart not.
+# The click runs from the shell, so the repair runs as a unit of its own.
+RESTART_AUDIO = ('systemd-run', '--user', '--quiet', '--collect', 'omarchy-audio-watchdog', '--repair', 'stack', '--manual')
 outage = dict(since=None, notified=False, repaired=False)
 # After WirePlumber is restarted the rebuilt graph may appear before the event
 # subscription is listening, so the watcher looks again shortly anyway.
 recheck = dict(at=None)
+# The mapping's Pulse index, so a change of its own gain or mute is saved.
+mapping_index = dict(value=None)
 
 
 class Deferred(Exception):
@@ -44,14 +51,16 @@ class Deferred(Exception):
 class Audio:
     stamp = None
 
-    def restart_session_manager(self):
-        # In that state WirePlumber ignores SIGTERM until systemd's stop
-        # timeout (90 s without audio), so it is killed first; the restart
-        # then brings it back whether or not the kill found it running.
-        subprocess.run(['systemctl', '--user', 'kill', '--signal=SIGKILL', 'wireplumber.service'],
-                       capture_output=True, timeout=10)
-        subprocess.run(['systemctl', '--user', '--no-block', 'restart', 'wireplumber.service'],
-                       check=True, capture_output=True, timeout=10)
+    def restart_session_manager(self, reason):
+        # The audio watchdog owns every automatic audio restart: it kills the
+        # wedged WirePlumber around a stopped shell, and declines (DEFERRED)
+        # during a logout, under the lock screen or while another repair runs.
+        # It runs as its own unit, so a mapper that stops or gives up waiting
+        # never leaves the shell stopped. Returns its exit code.
+        return subprocess.run(['systemd-run', '--user', '--wait', '--quiet', '--collect', '--unit=omarchy-audio-repair-%d' % os.getpid(),
+                               '--description=Restart WirePlumber for the microphone mapping',
+                               'omarchy-audio-watchdog', '--repair', 'wireplumber', '--reason', reason],
+                              stdin=subprocess.DEVNULL, capture_output=True, timeout=300).returncode
 
     def run(self, *args):
         # Errors are matched in English (pw-link's EPERM below).
@@ -203,7 +212,9 @@ def audible(obj):
 def save_state(audio, path):
     sources = {obj['name']: obj for obj in audio.objects('sources')}
     if MAPPING not in sources:
+        mapping_index['value'] = None
         return
+    mapping_index['value'] = str(sources[MAPPING].get('index'))
     write_state(path, gain(sources[MAPPING]))
 
 
@@ -333,26 +344,33 @@ def repair_graph(audio, reason):
     # WirePlumber 0.5 (wireplumber#1028) keeps the ids of a DSP graph it tore
     # down (a logout, a card profile change) in its hidden list and hides them
     # from every later client, so the rebuilt microphone graph stays hidden or
-    # refuses the mapping's links until WirePlumber restarts. Restart it, at
-    # most once every few minutes whatever keeps failing. The stamp holds the
-    # boot-relative time of the last attempt, shared by every mapper process.
+    # refuses the mapping's links until WirePlumber restarts. Ask the audio
+    # watchdog to restart it, at most once every few minutes whatever keeps
+    # failing; the watchdog adds its own budget and never restarts during a
+    # logout. The stamp holds the boot-relative time of the last attempt,
+    # shared by every mapper process.
+    # Returns True (restarted), False, or DEFERRED: not now (a logout, the
+    # lock screen, another repair), try again soon; that costs no attempt.
     if audio.stamp is not None:
         try:
             if 0 <= time.monotonic() - float(audio.stamp.read_text()) < REPAIR_INTERVAL:
                 return False
         except (OSError, ValueError):
             pass
+    try:
+        code = audio.restart_session_manager(reason)
+    except (OSError, subprocess.SubprocessError) as error:
+        print('Could not restart WirePlumber: ' + str(error), file=sys.stderr, flush=True)
+        code = 1
+    if code == DEFERRED:
+        return DEFERRED
+    if audio.stamp is not None:
         try:
             audio.stamp.parent.mkdir(parents=True, exist_ok=True)
             audio.stamp.write_text(repr(time.monotonic()))
         except OSError as error:
             print('Could not record the WirePlumber repair: ' + str(error), file=sys.stderr, flush=True)
-            return False
-    print('Restarting WirePlumber: ' + reason, file=sys.stderr, flush=True)
-    try:
-        audio.restart_session_manager()
-    except (OSError, subprocess.SubprocessError) as error:
-        print('Could not restart WirePlumber: ' + str(error), file=sys.stderr, flush=True)
+    if code != 0:
         return False
     recheck['at'] = time.monotonic() + 3.0
     return True
@@ -420,11 +438,15 @@ def reconcile(audio, state, save_only=False, checked=None):
             if outage['since'] is None:
                 outage['since'] = time.monotonic()
             elif not outage['notified'] and time.monotonic() - outage['since'] >= OUTAGE_GRACE:
-                if not outage['repaired'] and not card_disabled(audio) and repair_graph(audio, 'the Asahi DSP microphone is missing'):
+                repaired = not outage['repaired'] and not card_disabled(audio) and repair_graph(audio, 'the Asahi DSP microphone is missing')
+                if repaired is True:
                     outage.update(since=time.monotonic(), repaired=True)
+                elif repaired == DEFERRED:
+                    # Ask again in half a minute (after an unlock, say).
+                    outage['since'] = time.monotonic() - OUTAGE_GRACE + 30.0
                 else:
                     outage['notified'] = True
-                    audio.notify('Built-in microphone unavailable', 'Click to restart audio', 'omarchy-restart-audio')
+                    audio.notify('Built-in microphone unavailable', 'Click to restart audio', *RESTART_AUDIO)
         else:
             outage.update(since=None, notified=False, repaired=False)
         raise Deferred('No Asahi DSP microphone is present; user service will retry if an array appears')
@@ -611,15 +633,20 @@ class Subscription:
     # links and defaults. Client and stream events are ignored outright. A
     # burst settles for a quiet interval so a hot-plug repairs once, a cap
     # keeps a steady stream from starving repair, and a slow backstop keeps
-    # the eventually-consistent guarantee that polling every two seconds gave
-    # (it is also what persists a gain change made between other events).
+    # the eventually-consistent guarantee that polling every two seconds gave.
+    # A change of the mapping's own source only saves its gain and mute: an
+    # audio restart must not bring back an older, unmuted microphone.
     EVENT = re.compile(rb"^Event '(new|remove)' on (sink|source|card|module) #|^Event 'change' on (card|module|server) #")
+    SOURCE_CHANGE = re.compile(rb"^Event 'change' on source #([0-9]+)$")
 
     def __init__(self, command=('pactl', 'subscribe'), quiet=0.5, settle=5.0, backstop=600.0, retry=2.0):
         self.command = list(command)
         self.quiet, self.settle, self.backstop, self.retry = quiet, settle, backstop, retry
         self.process = None
         self.buffer = b''
+        # Save-only wakes never reset the backstop, or a busy microphone
+        # would starve it.
+        self.last_full = time.monotonic()
 
     def start(self):
         try:
@@ -650,30 +677,43 @@ class Subscription:
         *complete, self.buffer = self.buffer.split(b'\n')
         return complete
 
+    def full(self):
+        self.last_full = time.monotonic()
+        return False
+
     def wait(self, limit=None):
+        # True: only the mapping's gain or mute may have changed.
         if self.process is None and not self.start():
             time.sleep(self.retry)
-            return
-        backstop = self.backstop if limit is None else min(self.backstop, limit)
+            return self.full()
         started = time.monotonic()
+        hard = self.last_full + self.backstop if limit is None else min(self.last_full + self.backstop, started + limit)
         due = None
         latest = None
+        repair = False
         while True:
             now = time.monotonic()
-            deadline = started + backstop if due is None else min(due, latest)
-            if deadline <= now:
-                return
-            ready, _, _ = select.select([self.process.stdout], [], [], deadline - now)
-            if not ready:
-                return
+            deadline = hard if due is None else min(due, latest) if repair else min(due, latest, hard)
+            if deadline <= now or not select.select([self.process.stdout], [], [], deadline - now)[0]:
+                if due is None or repair or time.monotonic() >= hard:
+                    return self.full()
+                return True
             lines = self.lines()
             if lines is None:
                 # The subscription ended: pipewire-pulse went away or is not up
                 # yet. Repair now, then resubscribe after a pause.
                 self.stop()
                 time.sleep(self.retry)
-                return
-            if any(self.EVENT.match(line) for line in lines):
+                return self.full()
+            woken = False
+            for line in lines:
+                if self.EVENT.match(line):
+                    woken = repair = True
+                else:
+                    change = self.SOURCE_CHANGE.match(line)
+                    if change and mapping_index['value'] is not None and change.group(1).decode() == mapping_index['value']:
+                        woken = True
+            if woken:
                 now = time.monotonic()
                 due = now + self.quiet
                 if latest is None:
@@ -685,17 +725,21 @@ def supervise(operation, wait=None):
     if subscription is not None:
         wait = lambda: subscription.wait(outage_due())
     previous_error = None
+    save_only = False
     try:
         while True:
             try:
-                operation()
+                if save_only:
+                    operation(save=True)
+                else:
+                    operation()
                 previous_error = None
             except Exception as error:
                 message = str(error)
                 if message != previous_error:
                     print(message, file=sys.stderr, flush=True)
                     previous_error = message
-            wait()
+            save_only = bool(wait())
     finally:
         if subscription is not None:
             subscription.stop()
@@ -713,7 +757,7 @@ def main():
     state = Path(os.environ.get('XDG_STATE_HOME', str(Path.home() / '.local/state'))) / 'omarchy/asahi-mic-gain.json'
     checked = set()
     Audio.stamp = runtime / 'omarchy-asahi-mic.repaired'
-    operation = lambda: run_once(Audio(), runtime, state, args.save_state, checked)
+    operation = lambda save=False: run_once(Audio(), runtime, state, args.save_state or save, checked)
     if args.watch:
         # Let a service stop unwind through supervise so the subscriber exits too.
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
