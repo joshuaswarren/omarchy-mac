@@ -46,10 +46,12 @@ class Audio:
 
     def restart_session_manager(self):
         # In that state WirePlumber ignores SIGTERM until systemd's stop
-        # timeout (90 s without audio), so it is killed and started again.
-        for command in (('kill', '--signal=SIGKILL'), ('start', '--no-block')):
-            subprocess.run(['systemctl', '--user', *command, 'wireplumber.service'],
-                           check=True, capture_output=True, timeout=10)
+        # timeout (90 s without audio), so it is killed first; the restart
+        # then brings it back whether or not the kill found it running.
+        subprocess.run(['systemctl', '--user', 'kill', '--signal=SIGKILL', 'wireplumber.service'],
+                       capture_output=True, timeout=10)
+        subprocess.run(['systemctl', '--user', '--no-block', 'restart', 'wireplumber.service'],
+                       check=True, capture_output=True, timeout=10)
 
     def run(self, *args):
         # Errors are matched in English (pw-link's EPERM below).
@@ -340,8 +342,12 @@ def repair_graph(audio, reason):
                 return False
         except (OSError, ValueError):
             pass
-        audio.stamp.parent.mkdir(parents=True, exist_ok=True)
-        audio.stamp.write_text(repr(time.monotonic()))
+        try:
+            audio.stamp.parent.mkdir(parents=True, exist_ok=True)
+            audio.stamp.write_text(repr(time.monotonic()))
+        except OSError as error:
+            print('Could not record the WirePlumber repair: ' + str(error), file=sys.stderr, flush=True)
+            return False
     print('Restarting WirePlumber: ' + reason, file=sys.stderr, flush=True)
     try:
         audio.restart_session_manager()

@@ -614,6 +614,17 @@ with mock.patch.object(m.subprocess, 'run', return_value=subprocess.CompletedPro
         mock.patch.dict(os.environ, {'LC_ALL': 'de_DE.UTF-8', 'LANG': 'de_DE.UTF-8'}):
     m.Audio().run('pw-link', '-L', '1', '2')
     assert run.call_args.kwargs['env']['LC_ALL'] == 'C' and run.call_args.kwargs['env']['LANG'] == 'de_DE.UTF-8'
+# A restart that cannot run leaves the refused-link error as the mapping's.
+with tempfile.TemporaryDirectory() as temporary:
+    class Unrestartable(Audio):
+        def restart_session_manager(self): raise subprocess.CalledProcessError(1, 'systemctl')
+    m.recheck["at"] = None
+    audio = Unrestartable(); audio.stamp = Path(temporary) / 'stamp'; audio.fail_link = 21
+    audio.link_error = 'pw-link -L: failed to link ports: Operation not permitted'
+    try: m.reconcile(audio, Path(temporary) / 'state.json')
+    except RuntimeError as error: assert 'Operation not permitted' in str(error), error
+    else: raise AssertionError('a refused link must fail the mapping')
+    assert m.recheck['at'] is None, 'no re-check follows a restart that did not happen'
 unit = (root / 'vendor/systemd/user/omarchy-asahi-mic.service').read_text()
 assert '--watch' in unit and 'PartOf=graphical-session.target' in unit
 assert 'PartOf=pipewire.service' not in unit and 'After=graphical-session.target' not in unit
