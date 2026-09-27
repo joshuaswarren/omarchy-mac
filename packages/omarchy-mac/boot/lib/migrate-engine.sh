@@ -10,7 +10,15 @@
 # journal and every change to the system.
 #
 # The caller sets R (the fixture root, empty on a live system), fixture (1 when
-# unprivileged tests drive it) and boot_lib. Adapters read the target_* values.
+# unprivileged tests drive it), boot_lib and payload_version (the version of the
+# unpacked omarchy-mac-boot it runs from, or nothing when it runs installed).
+# Adapters read the target_* values.
+#
+# Exit status: 0 when the Mac is migrated, waits for its reboot or has nothing
+# to migrate; 75 (EX_TEMPFAIL) when it stopped before anything changed (a
+# preflight refusal, or any failure before the journal exists), which
+# omarchy-migrate treats as deferred; 1 when a step failed, and running again
+# resumes it.
 # shellcheck disable=SC2034,SC2154
 
 migrate_steps=(preflight backup keyring prefetch repositories transaction boot-chain loader defaults reboot retire)
@@ -67,6 +75,8 @@ die() {
   if [[ -n $current_step && -f $journal ]]; then
     journal_write "$current_step" "fail" "$*"
   fi
+  # With nothing journaled, nothing has changed: deferred, like a refusal.
+  [[ -f $journal ]] || exit 75
   exit 1
 }
 
@@ -330,7 +340,7 @@ candidate_identity() {
 
 find_target() {
   local candidate
-  for candidate in "$@" "$R/etc/omarchy-mac/migration-target" "$R/usr/lib/omarchy-mac/boot/migration-target"; do
+  for candidate in "$@" "$R/etc/omarchy-mac/migration-target" "$boot_lib/migration-target"; do
     if [[ -n $candidate && -e $candidate ]]; then
       printf '%s\n' "$candidate"
       return
@@ -445,7 +455,11 @@ target_version() {
 detect_cohort() {
   local list=$1
   if grep -Eq '^omarchy(-settings)?-dev ' "$list"; then
-    echo mx-mac
+    if mx_mac_fork; then
+      echo mx-mac
+    else
+      echo official-dev
+    fi
   elif ! grep -Eq '^omarchy ' "$list" || grep -Eq '^omarchy-mac-keyring ' "$list" ||
     [[ -e $R/usr/share/omarchy/bin/omarchy-upgrade-to-quattro-mac ]]; then
     echo legacy
@@ -456,8 +470,27 @@ detect_cohort() {
 
 cohort_refusal() {
   case $1 in
+    official-dev) echo "omarchy-dev is installed without the omarchy-mx-mac fork's updaters or records, but this Mac still trusts what the switch retires (${official_problems:-a retired repository or key}): no adapter handles it" ;;
     *) echo "no adapter handles the $1 cohort" ;;
   esac
+}
+
+# What stops a Mac running omarchy-dev from counting as a Mac on Omarchy's own
+# dev channel: a retired repository or key, a repository trusted without
+# signatures, or an [omarchy] served from anywhere but pkgs.omarchy.org.
+official_trust_problems() {
+  local conf repos repo fpr
+  conf=$(cat "$1")
+  repos=$(repositories_in <(printf '%s\n' "$conf"))
+  for repo in "${retired_repos[@]}"; do
+    ! grep -Fxq "$repo" <<<"$repos" || echo "[$repo]"
+  done
+  for fpr in "${retired_keys[@]}"; do
+    ! key_present "$fpr" || echo "the key $fpr"
+  done
+  printf '%s\n' "$conf" | awk '/^[[:space:]]*\[[^]]+\][[:space:]]*$/ { name = $0; gsub(/^[[:space:]]*\[|\][[:space:]]*$/, "", name); next }
+    name == "omarchy" && /^[[:space:]]*Server[[:space:]]*=/ && $0 !~ /=[[:space:]]*https:\/\/pkgs\.omarchy\.org\// { print "an [omarchy] server other than pkgs.omarchy.org" }
+    /^[[:space:]]*SigLevel[[:space:]]*=/ && /TrustAll|Never/ { print "[" name "] without signature checks" }' | sort -u
 }
 
 # Runs the cohort's optional hook for a step.
@@ -548,7 +581,7 @@ pacman_trust_problems() {
 
 preflight() {
   local reasons=() installed boot_state kernels hooks="" check_output luks="" need esp_mount staged=0
-  local future transaction targets_file resolved name version problem
+  local future transaction targets_file resolved name version problem official_problems=""
   work=$(mktemp -d "$R/var/tmp/omarchy-mac-migrate.XXXXXX") || die "cannot create a work directory"
   chmod 755 "$work"
   installed=$work/installed
@@ -558,6 +591,15 @@ preflight() {
   [[ ! -e $pacman_db/db.lck ]] || reasons+=("pacman is busy or was interrupted ($pacman_db/db.lck exists)")
 
   cohort=$(detect_cohort "$installed")
+  # omacom's repositories carry an omarchy-dev of their own: a Mac following
+  # Omarchy's dev channel already runs official packages.
+  if [[ $cohort == "official-dev" ]]; then
+    official_problems=$(official_trust_problems <(pacman_conf_flat "$pacman_conf") | paste -sd, | sed 's/,/, /g')
+    if [[ -z $official_problems ]]; then
+      say "This Mac runs Omarchy's own dev channel (omarchy-dev from pkgs.omarchy.org): nothing to migrate."
+      exit 0
+    fi
+  fi
   declare -F "${cohort//-/_}_plan" >/dev/null || reasons+=("$(cohort_refusal "$cohort")")
   ! declare -F "${cohort//-/_}_stage" >/dev/null || staged=1
 
@@ -675,6 +717,13 @@ preflight() {
       grep -Fxq "$name $version" "$resolved" || refuse "${name#*/} does not resolve to the candidate's $version"
     done <"$targets_file"
   fi
+  # Run from a download, the engine is the omarchy-mac-boot the transaction
+  # installs, or it stops: the next run fetches the current one.
+  if [[ -n ${payload_version:-} ]]; then
+    version=$(awk '{ name = $1; sub(/^[^\/]*\//, "", name) } name == "omarchy-mac-boot" { print $2; exit }' "$resolved")
+    [[ $version == "$payload_version" ]] ||
+      refuse "this migration runs from omarchy-mac-boot $payload_version, but the target installs ${version:-no omarchy-mac-boot}"
+  fi
 
   gpgdir=""
   if already_on_target "$installed" "$resolved" "$targets_file" "$future"; then
@@ -726,7 +775,7 @@ preflight() {
 refuse() {
   say "The migration was refused before anything changed:" >&2
   printf '  - %s\n' "$@" >&2
-  exit 2
+  exit 75
 }
 
 # Every target is installed at the version the target resolves to, the
@@ -860,13 +909,28 @@ plan_removals() {
   return 0
 }
 
+# Paths the installed package NAME owns in DB that another package there owns
+# too. pacman -R deletes every file of the package it removes, whoever else
+# owns it, so a planned removal that hands files over (omarchy-dev's commands
+# to omarchy-mac-boot) must leave inside the transaction, through the conflict
+# of the package that replaces it, never in the removals after it.
+shared_files() {
+  local db=$1 name=$2
+  LC_ALL=C pacman --config "$pacman_conf" --dbpath "$db" -Ql 2>/dev/null | awk -v name="$name" '
+    { owner = $1; path = $0; sub(/^[^ ]+ /, "", path) }
+    path ~ /\/$/ { next }
+    owner == name { mine[path] = 1; next }
+    { other[path] = 1 }
+    END { for (path in mine) if (path in other) print path }' | LC_ALL=C sort
+}
+
 # Downloads and verifies every package the transaction needs, then rehearses the
 # transaction on a copy of the package database (--dbonly: no files, scripts or
 # hooks) to learn exactly what it installs and removes. Signatures are checked
 # against the trust the switch leaves, a copy of the keyring without the
 # retired keys, so nothing that needs a fork key gets this far.
 step_prefetch() {
-  local db=$cache/db rehearsal=$cache/rehearsal conf=$cache/transaction.conf removed name version bad=() fpr removals
+  local db=$cache/db rehearsal=$cache/rehearsal conf=$cache/transaction.conf removed name version bad=() fpr removals shared
   install -d -m 755 "$cache" "$cache/pkg"
   rm -rf "$db" "$rehearsal" "$cache/candidate" "$cache/trust"
   mkdir -p "$db"
@@ -894,6 +958,11 @@ step_prefetch() {
     --dbonly -Su --noconfirm --ask 4 $(plan_ignores) $(plan_targets) >"$cache/rehearsal.log" 2>&1 ||
     die "the rehearsed transaction failed: $(tail -n 1 "$cache/rehearsal.log")"
   removals=$(plan_removals "$rehearsal" | xargs)
+  for name in $removals; do
+    shared=$(shared_files "$rehearsal" "$name" | head -n 3 | xargs)
+    [[ -z $shared ]] ||
+      die "the transaction would leave $name to be removed after it, but the packages it installs also own $shared; nothing was changed"
+  done
   if [[ -n $removals ]]; then
     # shellcheck disable=SC2086
     pacman_run --config "$conf" --dbpath "$rehearsal" --logfile "$cache/pacman.log" --dbonly -R --noconfirm $removals \
@@ -1035,7 +1104,7 @@ overwrite_glob() {
 # package owns that it may replace; when pacman fails, the adapter restores
 # what it prepared. Planned removals run after it, by name.
 step_transaction() {
-  local holder interrupted=0 overwrite=() remove=() path
+  local holder interrupted=0 overwrite=() remove=() path removal shared
   if [[ -e $pacman_db/db.lck ]]; then
     if holder=$(lock_holder); then
       die "pacman is running (process $holder); run the migration again when it has finished"
@@ -1076,6 +1145,10 @@ step_transaction() {
     fi
     interrupt_for_test mid removals
     mapfile -t remove < <(plan_removals "$pacman_db")
+    for removal in "${remove[@]}"; do
+      shared=$(shared_files "$pacman_db" "$removal" | head -n 3 | xargs)
+      [[ -z $shared ]] || die "cannot remove $removal: other packages also own $shared, which pacman -R would delete"
+    done
     if (( ${#remove[@]} )); then
       pacman_run --config "$cache/transaction.conf" --dbpath "$pacman_db" -R --noconfirm "${remove[@]}" ||
         die "cannot remove ${remove[*]}"
@@ -1207,19 +1280,45 @@ install_defaults() {
   output=$(boot_check_pending linux-aurora 2>&1) || die "the boot files do not check after the default packages: $(tail -n 1 <<<"$output")"
 }
 
+# Official migrations a migrated Mac records as done instead of running them,
+# as a fresh Mac image has them (reviewed for ticket 53): initramfs and
+# boot-chain repairs for the x86 Limine, T2, NVIDIA and linux-omarchy paths,
+# whose Mac counterparts are this package's; the Intel Mac Broadcom quirk, which breaks
+# Apple Silicon Wi-Fi; systemd-oomd, which stays off on Macs; and the platform
+# migration, which handed the Mac to this engine. Every other official
+# migration still pending runs on the next omarchy update, as on any install
+# that upgraded. An adapter adds what its cohort already applied.
+settled_migrations="1784476564 1784917531 1785273276 1785424256 1785944594 1786137597 1786391100 1786482992 1786605598 1789325478 1789444024 1790347292"
+platform_migration=1790347292
+
+# Records the settled migrations for USER, as the user, where they are not
+# recorded yet.
+settle_migrations() {
+  local user=$1 home=$2 dir=$R$2/.local/state/omarchy/migrations name
+  as_user "$user" "$R$home" mkdir -p "$dir" || return 1
+  for name in $settled_migrations $(adapter_hook settled "$dir"); do
+    [[ -e $dir/$name.sh ]] || as_user "$user" "$R$home" touch "$dir/$name.sh" || return 1
+  done
+}
+
 # A migrated Mac ends as a fresh install does: with its default packages, the
 # Mac services the image's hardware setup enables and, for every Omarchy user,
-# the units first run enables and the Mac user setup. A unit the Mac already
-# had before the migration is taken to be off by choice and stays off; a plan
-# frozen before that was recorded enables none. The reboot that follows brings
-# up what probes only at boot, such as the video decoder.
+# the migrations a fresh image records as done, the units first run enables and
+# the Mac user setup. A unit the Mac already had before the migration is taken
+# to be off by choice and stays off; a plan frozen before that was recorded
+# enables none. The reboot that follows brings up what probes only at boot,
+# such as the video decoder.
 step_defaults() {
   local user home unit
   install_defaults
   interrupt_for_test mid defaults
   omarchy-mac-setup-system >/dev/null || die "omarchy-mac-setup-system could not set up the Mac's services"
+  [[ -e $R/var/lib/omarchy/migrations/$platform_migration ]] ||
+    install -D -m 644 /dev/null "$R/var/lib/omarchy/migrations/$platform_migration" ||
+    die "cannot record the platform migration as done"
   while read -r user home; do
     [[ -n $user ]] || continue
+    settle_migrations "$user" "$home" || die "cannot record the settled migrations for $user"
     if [[ -f $plan/user-units ]]; then
       for unit in $fresh_user_units; do
         grep -Fxq "$unit" "$plan/user-units" && continue
@@ -1271,6 +1370,8 @@ tidy_completed() {
     rm -rf "$cache" "$set_copy" "$state/installed.now" "$state/overwrite"
     rm -f "$reboot_pending"
   fi
+  # omarchy-mac-migrate-bootstrap's download, now installed, unless this runs from it.
+  [[ -n ${payload_version:-} ]] || rm -rf "$R/var/lib/omarchy-mac/bootstrap"
 }
 
 # --- Commands ----------------------------------------------------------------

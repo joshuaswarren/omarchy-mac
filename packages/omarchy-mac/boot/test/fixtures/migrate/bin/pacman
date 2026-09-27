@@ -12,7 +12,8 @@
 #   replaces owns it or --overwrite names it, then writes its files. A path in
 #   $MIGRATE_FIXTURE/backups is a backup= file: one no package owns is never a
 #   conflict; one whose contents are not a package's own copy stays as it is,
-#   and when no package owned it the package's copy lands as .pacnew.
+#   and when no package owned it the package's copy lands as .pacnew. A
+#   --dbonly transaction records the paths and writes none, as pacman does.
 # - With $MIGRATE_FIXTURE/verify-signatures, a sync database line may carry a
 #   third column, the key that signed the package; where the repository's
 #   SigLevel requires signatures, the key must be trusted in --gpgdir's keys.
@@ -118,6 +119,10 @@ if [[ $op == "R" ]]; then
     : >"$dbpath/db.lck"
     echo "remove ${args[*]}" >>"$fixture/pacman.log"
     for name in "${args[@]}"; do remove_files "$name"; done
+  elif [[ -f $files_db ]]; then
+    for name in "${args[@]}"; do
+      awk -v name="$name" '$1 != name' "$files_db" >"$files_db.new" && mv "$files_db.new" "$files_db"
+    done
   fi
   for name in "${args[@]}"; do unset "version[$name]"; done
   for name in "${!version[@]}"; do
@@ -352,6 +357,14 @@ if (( ! dbonly )) && [[ -d $fixture/files ]]; then
     done <"$fixture/files/$name"
   done
   rm -f "$files_db.before"
+fi
+if (( dbonly )) && [[ -d $fixture/files && -f $files_db ]]; then
+  awk 'NR == FNR { keep[$1]; next } $1 in keep' \
+    <(echo "-"; for name in "${!version[@]}"; do [[ -n ${changed[$name]:-} ]] || echo "$name"; done) "$files_db" >"$files_db.new"
+  for name in "${!changed[@]}"; do
+    [[ ! -f $fixture/files/$name ]] || sed "s|^|$name |" "$fixture/files/$name" >>"$files_db.new"
+  done
+  mv "$files_db.new" "$files_db"
 fi
 for name in "${!version[@]}"; do
   echo "$name ${version[$name]}"

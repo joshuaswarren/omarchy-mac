@@ -479,7 +479,7 @@ refused() { # description reason-pattern
   local status=0 output digest
   digest=$(fixture_digest)
   output=$(migrate run 2>&1) || status=$?
-  (( status == 2 )) || fail "$1: preflight refuses" "status $status: $output"
+  (( status == 75 )) || fail "$1: preflight refuses" "status $status: $output"
   grep -q -- "$2" <<<"$output" || fail "$1: the refusal says why" "$output"
   [[ ! -e $(state_dir) ]] || fail "$1: no migration state is created"
   [[ $(fixture_digest) == "$digest" ]] || fail "$1: nothing on the system changed"

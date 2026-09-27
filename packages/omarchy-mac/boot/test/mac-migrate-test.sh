@@ -410,7 +410,7 @@ refused() { # description reason-pattern
   local status=0 output digest
   digest=$(fixture_digest)
   output=$(migrate run 2>&1) || status=$?
-  (( status == 2 )) || fail "$1: preflight refuses" "status $status: $output"
+  (( status == 75 )) || fail "$1: preflight refuses" "status $status: $output"
   grep -q -- "$2" <<<"$output" || fail "$1: the refusal says why" "$output"
   [[ ! -e $(state_dir) ]] || fail "$1: no migration state is created"
   [[ $(fixture_digest) == "$digest" ]] || fail "$1: nothing on the system changed"
@@ -490,7 +490,7 @@ done
 digest=$(fixture_digest)
 status=0
 output=$(OMARCHY_MAC_MIGRATE_ROOT=$R MIGRATE_FIXTURE=$F PATH="$stubs:$F/usr-bin" "$R/usr/bin/omarchy-mac-migrate" run 2>&1) || status=$?
-(( status == 2 )) && grep -q "gpgv is not installed" <<<"$output" && [[ ! -e $(state_dir) && $(fixture_digest) == "$digest" ]] ||
+(( status == 75 )) && grep -q "gpgv is not installed" <<<"$output" && [[ ! -e $(state_dir) && $(fixture_digest) == "$digest" ]] ||
   fail "without gpgv a candidate set is refused, and says why" "status $status: $output"
 new_fixture refusals
 jq '.packages |= map(select(.name != "uboot-asahi"))' "$F/set/manifest.json" >"$F/manifest" && mv "$F/manifest" "$F/set/manifest.json"
@@ -525,7 +525,7 @@ new_fixture target-trust
 chmod 666 "$R/etc/omarchy-mac/migration-target"
 status=0
 output=$(migrate run 2>&1) || status=$?
-(( status == 1 )) && grep -q "refusing the target" <<<"$output" || fail "a target others can write is refused" "$output"
+(( status == 75 )) && grep -q "refusing the target" <<<"$output" && [[ ! -e $(state_dir) ]] || fail "a target others can write is refused, deferred with nothing changed" "$output"
 chmod 644 "$R/etc/omarchy-mac/migration-target"
 chmod 777 "$F/set"
 output=$(migrate run 2>&1) && fail "a candidate directory others can write is refused" "$output"

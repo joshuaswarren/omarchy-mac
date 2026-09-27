@@ -41,16 +41,39 @@ mx_mac_counterpart() {
   esac
 }
 
-# mx_mac_preflight INSTALLED LUKS: prints the states this adapter refuses.
 # omacom's repositories carry an omarchy-dev of their own, so the fork is told
-# by its updaters or their records, not by the package name alone.
-mx_mac_preflight() {
-  local marker fork=0
+# by its updaters or their records, not by the package name alone. The engine
+# asks this before it picks the cohort.
+mx_mac_fork() {
+  local marker
   for marker in usr/share/omarchy/bin/omarchy-update-asahi-bundle usr/share/omarchy/bin/omarchy-update-asahi-repository \
     usr/share/omarchy/bin/omarchy-update-aurora-repository var/lib/omarchy/asahi-quattro-release var/lib/omarchy/asahi-package-repository; do
-    [[ ! -e $R/$marker ]] || fork=1
+    [[ ! -e $R/$marker ]] || return 0
   done
-  (( fork )) || echo "omarchy-dev is installed, but not the omarchy-mx-mac fork's (none of its updaters or their records): no adapter handles it"
+  return 1
+}
+
+# Official migrations the fork's runner settled as handled, not run: its
+# Quattro transition applied their effect (packages, theme and Hyprland state,
+# the network and zram changes), so running them again could edit the user's
+# configuration twice. The runner records that in <migration>.sh.skipped.
+mx_mac_handled="1778623107 1780739888 1781043107 1781063758 1781158082 1781485962 1781793381 1782002156 1784401744 1784672586 1784914435 1784961000 1785013000"
+
+# mx_mac_settled DIR: the handled migrations DIR's records say the fork's
+# runner settled, which the engine records as done. What it skipped instead
+# runs on the new packages, apart from what the engine settles on every Mac.
+mx_mac_settled() {
+  local dir=$1 name record disposition
+  for name in $mx_mac_handled; do
+    record=$dir/$name.sh.skipped
+    [[ -f $record && ! -L $record ]] || continue
+    IFS=$'\t' read -r _ disposition _ <"$record" || continue
+    [[ $disposition != "handled" ]] || printf '%s\n' "$name"
+  done
+}
+
+# mx_mac_preflight INSTALLED LUKS: prints the states this adapter refuses.
+mx_mac_preflight() {
   if [[ " $target_packages " != *" omarchy "* || " $target_packages " != *" omarchy-settings "* ]]; then
     echo "the target has no omarchy and omarchy-settings to replace omarchy-dev and omarchy-settings-dev"
   fi

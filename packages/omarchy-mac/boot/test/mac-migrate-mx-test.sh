@@ -474,7 +474,7 @@ refused() { # description reason-pattern
   local status=0 output digest
   digest=$(fixture_digest)
   output=$(migrate run 2>&1) || status=$?
-  (( status == 2 )) || fail "$1: preflight refuses" "status $status: $output"
+  (( status == 75 )) || fail "$1: preflight refuses" "status $status: $output"
   grep -q -- "$2" <<<"$output" || fail "$1: the refusal says why" "$output"
   [[ ! -e $(state_dir) ]] || fail "$1: no migration state is created"
   [[ $(fixture_digest) == "$digest" ]] || fail "$1: nothing on the system changed"
@@ -506,7 +506,7 @@ printf 'format=1\ntype=repository\nchannel=stable\nserver=file://%s/repos/omarch
 refused "a target without the runtime pair" "the target has no omarchy and omarchy-settings"
 new_fixture refusals
 rm "$R"/var/lib/omarchy/asahi-*
-refused "an omarchy-dev that is not the fork's" "not the omarchy-mx-mac fork's"
+refused "an omarchy-dev that is not the fork's, beside what the switch retires" "without the omarchy-mx-mac fork's updaters or records, but this Mac still trusts what the switch retires (\\[omarchy-aurora\\]"
 pass "preflight refuses legacy unlock, untrusted repositories, an unfinished first boot, the fork's boot tools, an omarchy-dev that is not the fork's and an incomplete or unverifiable target, changing nothing"
 
 new_fixture weak-fork
@@ -572,3 +572,139 @@ grep -qx "transaction omarchy/omarchy omarchy/omarchy-settings omarchy/omarchy-m
 grep -q "^omarchy 4.0.2-1$" "$R/var/lib/pacman/local/packages" && ! grep -q "^omarchy-dev " "$R/var/lib/pacman/local/packages" ||
   fail "the official runtime replaces the fork's" "$(cat "$R/var/lib/pacman/local/packages")"
 pass "a repository target, whose [omarchy] has the fork section's name, replaces the fork's builds"
+
+# --- From a download of omarchy-mac-boot -------------------------------------------
+
+# A real mx-mac Mac has no omarchy-mac-boot: its omarchy-dev owns five of the
+# commands omarchy-mac-boot ships. omarchy-mac-migrate-bootstrap unpacks the
+# official package into a root-only directory and runs the engine from it; the
+# engine's one transaction installs omarchy-mac-boot while omarchy's conflict
+# removes omarchy-dev, so the commands change hands with nothing overwritten.
+handover="/usr/bin/omarchy-apple-silicon-boot-check /usr/bin/omarchy-mac-boot-update /usr/bin/omarchy-mac-limine-active /usr/bin/omarchy-mac-limine-cmdline /usr/bin/omarchy-mac-limine-deploy"
+
+# payload_fixture NAME [VERSION]: the mx-mac fixture without omarchy-mac-boot,
+# its commands omarchy-dev's, and the package unpacked in $P at VERSION.
+payload_fixture() {
+  local path
+  new_fixture "$1"
+  P=$R/var/lib/omarchy-mac/bootstrap/payload
+  mkdir -p "$P"
+  bash "$ROOT/install" "$P"
+  printf 'pkgname = omarchy-mac-boot\npkgver = %s\n' "${2:-20260926-1.43}" >"$P/.PKGINFO"
+  # The adapter in the download says so when it is the one that runs.
+  echo 'echo "adapter from the download" >>"$MIGRATE_FIXTURE/boot.log"' >>"$P/usr/lib/omarchy-mac/boot/migrate-mx-mac.sh"
+  chmod -R go-w "$R/var/lib/omarchy-mac"
+  rm -f "$R/usr/bin/omarchy-mac-migrate" "$R"/usr/lib/omarchy-mac/boot/migrate-*.sh
+  sed -i '/^omarchy-mac-boot /d' "$R/var/lib/pacman/local/packages"
+  mkdir -p "$F/files"
+  : >"$R/var/lib/pacman/local/files"
+  for path in $handover; do
+    printf '%s\n' "$path" >>"$F/files/omarchy-dev"
+    printf '%s\n' "$path" >>"$F/files/omarchy-mac-boot"
+    printf 'omarchy-dev %s\n' "$path" >>"$R/var/lib/pacman/local/files"
+    echo "omarchy-dev 4.0.4.r7081.gca187b0-1" >"$R$path"
+  done
+  echo /usr/lib/omarchy-mac/boot/installed >>"$F/files/omarchy-mac-boot"
+}
+
+migrate_payload() {
+  OMARCHY_MAC_MIGRATE_ROOT=$R MIGRATE_FIXTURE=$F PATH="$stubs:$PATH" "$P/usr/bin/omarchy-mac-migrate" --payload "$P" "$@"
+}
+
+payload_fixture payload
+output=$(migrate_payload run 2>&1) || fail "an mx-mac Mac without omarchy-mac-boot migrates from the download" "$output"
+grep -q "adapter from the download" "$F/boot.log" || fail "the engine and its adapters run from the download" "$(cat "$F/boot.log")"
+for path in $handover; do
+  [[ $(cat "$R$path") == "omarchy-mac-boot 20260926-1.43" ]] && grep -qx "omarchy-mac-boot $path" "$R/var/lib/pacman/local/files" ||
+    fail "$path moves from omarchy-dev to omarchy-mac-boot" "$(grep -F "$path" "$R/var/lib/pacman/local/files")"
+done
+! grep -q "^omarchy-dev " "$R/var/lib/pacman/local/packages" && grep -qx "omarchy-mac-boot 20260926-1.43" "$R/var/lib/pacman/local/packages" ||
+  fail "one transaction swaps omarchy-dev for omarchy and installs omarchy-mac-boot" "$(cat "$R/var/lib/pacman/local/packages")"
+[[ ! -e $(state_dir)/overwrite ]] && ! grep -q "^remove omarchy-dev" "$F/pacman.log" ||
+  fail "omarchy-dev leaves inside the transaction, with nothing overwritten" "$(cat "$F/pacman.log")"
+# The package the transaction installed finishes the migration after the reboot.
+bash "$ROOT/install" "$R"
+reboot_into_aurora
+output=$(migrate verify 2>&1) && [[ -f $(state_dir)/complete ]] || fail "the installed package finishes the migration" "$output"
+[[ ! -e $R/var/lib/omarchy-mac/bootstrap ]] || fail "the finished migration removes the download it ran from"
+pass "from a download of omarchy-mac-boot, one transaction installs it and removes omarchy-dev, whose commands change hands without an overwrite"
+
+# Without omarchy's conflict, omarchy-dev would leave in the removals after the
+# transaction, and pacman -R would delete the commands omarchy-mac-boot took over.
+payload_fixture after-removal
+sed -i '/^omarchy omarchy-dev$/d' "$F/conflicts"
+conf_before=$(cat "$R/etc/pacman.conf")
+status=0
+output=$(migrate_payload run 2>&1) || status=$?
+(( status == 1 )) && grep -q "would leave omarchy-dev to be removed after it, but the packages it installs also own /usr/bin/omarchy-apple-silicon-boot-check" <<<"$output" ||
+  fail "a removal that would take handed-over files stops the rehearsal" "status $status: $output"
+[[ $(cat "$R/etc/pacman.conf") == "$conf_before" ]] && grep -q "^omarchy-dev " "$R/var/lib/pacman/local/packages" &&
+  ! grep -q "^transaction \|^remove " "$F/pacman.log" || fail "nothing changes before such a transaction" "$(cat "$F/pacman.log")"
+pass "a planned removal that shares files with the packages installed stops the migration before anything changes"
+
+payload_fixture stale-payload 20260925-4
+status=0
+digest=$(fixture_digest)
+output=$(migrate_payload run 2>&1) || status=$?
+(( status == 75 )) && grep -q "runs from omarchy-mac-boot 20260925-4, but the target installs 20260926-1.43" <<<"$output" ||
+  fail "a download older than the target's omarchy-mac-boot is refused" "status $status: $output"
+[[ $(fixture_digest) == "$digest" && ! -e $(state_dir) ]] || fail "a stale download changes nothing"
+pass "the engine runs only from the omarchy-mac-boot its transaction installs, and defers otherwise"
+
+payload_fixture writable-payload
+chmod g+w "$P/usr/lib/omarchy-mac/boot/migrate-engine.sh"
+status=0
+output=$(migrate_payload run 2>&1) || status=$?
+(( status == 1 )) && grep -q "refusing the payload" <<<"$output" && [[ ! -e $(state_dir) ]] ||
+  fail "a download someone else can write is refused" "status $status: $output"
+pass "a download anyone but its owner can write is never run"
+
+# --- Omarchy's own dev channel ------------------------------------------------------
+
+# omacom's omarchy-dev on a Mac that never ran the fork: nothing to migrate.
+official_dev_fixture() {
+  new_fixture "$1"
+  rm -f "$R"/var/lib/omarchy/asahi-* "$R/var/lib/omarchy/aurora-target.descriptor"
+  cat >"$R/etc/pacman.conf" <<CONF
+[options]
+Architecture = aarch64
+SigLevel = Required DatabaseOptional
+
+[omarchy]
+Server = https://pkgs.omarchy.org/edge/\$arch
+
+[core]
+Server = file://$F/repos/core
+CONF
+  sed -i "/^$fork_key /d; /^$release_key /d" "$R/etc/pacman.d/gnupg/keys"
+}
+
+official_dev_fixture official-dev
+digest=$(fixture_digest)
+output=$(migrate run 2>&1) || fail "a Mac on Omarchy's dev channel is not refused" "$output"
+grep -q "runs Omarchy's own dev channel .*nothing to migrate" <<<"$output" && [[ $(fixture_digest) == "$digest" && ! -e $(state_dir) ]] ||
+  fail "a Mac on Omarchy's dev channel has nothing to migrate and nothing changes" "$output"
+official_dev_fixture official-dev-fork-key
+echo "$fork_key f" >>"$R/etc/pacman.d/gnupg/keys"
+refused "omarchy-dev beside a retired key" "still trusts what the switch retires (the key $fork_key)"
+pass "omarchy-dev from Omarchy's own repositories is nothing to migrate; beside retired trust it is a deferred refusal"
+
+# --- Migrations a converted Mac records as done ----------------------------------------
+
+new_fixture settled
+printf 'root:x:0:0::/root:/bin/bash\ntester:x:1000:1000::/home/tester:/bin/bash\n' >"$R/etc/passwd"
+migrations=$R/home/tester/.local/state/omarchy/migrations
+mkdir -p "$migrations"
+printf '2026-09-20T10:00:00+10:00\thandled\tHyprland configuration replaced by the Quattro user transition\n' >"$migrations/1781063758.sh.skipped"
+printf '2026-09-20T10:00:00+10:00\tskipped\tunsupported AUR browser replacement on Asahi\n' >"$migrations/1784510887.sh.skipped"
+printf '2026-09-20T10:00:00+10:00\tskipped\tsystemd-oomd reclaim tuning is held until validated on Asahi\n' >"$migrations/1785424256.sh.skipped"
+printf '2026-09-20T10:00:00+10:00\thandled\tnot one the adapter audited\n' >"$migrations/1786567036.sh.skipped"
+finish
+for name in 1781063758 1784476564 1785424256 1786391100 1789444024 1790347292; do
+  [[ -f $migrations/$name.sh ]] || fail "$name is recorded as done" "$(ls "$migrations")"
+done
+for name in 1784510887 1786567036; do
+  [[ ! -e $migrations/$name.sh ]] || fail "$name is left to run on the new packages"
+done
+[[ -f $R/var/lib/omarchy/migrations/1790347292 ]] || fail "the platform migration's machine marker is written"
+pass "a converted Mac records the fork's handled migrations and those a fresh Mac image never runs as done, and leaves the rest to run"
