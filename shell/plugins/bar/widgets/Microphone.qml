@@ -24,8 +24,8 @@ BarWidget {
     for (var i = 0; i < nodes.length; i++) {
       var node = nodes[i]
       if (!node || !node.isStream || node.isSink !== false || node.audio?.muted) continue
-      // The DSP's own capture always runs, and the panel's level meter is ours.
-      if (appleHost && (AudioModel.isAsahiInternalStream(node.name) || node.name === "quickshell")) continue
+      // The DSP's own capture always runs, and the panel's level meters are ours.
+      if (appleHost && (AudioModel.isAsahiInternalStream(node.name) || node.name === "quickshell" || node.name === "omarchy-audio-level")) continue
       list.push(node)
     }
     return list
