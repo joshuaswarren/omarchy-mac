@@ -20,38 +20,42 @@ loader = importlib.machinery.SourceFileLoader('mic', str(root / 'bin/omarchy-aud
 spec = importlib.util.spec_from_loader(loader.name, loader)
 m = importlib.util.module_from_spec(spec); loader.exec_module(m)
 DSP = 'effect_output.j414-mic'
+VIRTUAL = 'module-null-sink', 'media.class=Audio/Source/Virtual sink_name=omarchy_asahi_mic channels=2 sink_properties=' + m.OWNER + '=existing'
+LEGACY_MODULE = dict(index='41', name='module-null-sink', argument='sink_name=omarchy_asahi_mic channels=2 sink_properties=device.description=AsahiMicrophone ' + m.OWNER + '=old')
 def obj(name, value=27525, mute=True):
     return dict(name=name, volume={'front-left': {'value': value}, 'front-right': {'value': value}}, mute=mute)
 class Audio:
     def __init__(self, existing=False, default=DSP):
-        self.calls = []; self.default = default; self.output = 'speakers'; self.existing = existing
-        self.sink = obj(m.SINK); self.monitor = obj(m.MONITOR); self.module = None
+        self.calls = []; self.default = default; self.existing = existing
+        self.mapping = obj(m.MAPPING)
+        self.module = dict(index='40', name=VIRTUAL[0], argument=VIRTUAL[1]) if existing else None
+        self.legacy = None
         self.linked = {}; self.missing = None; self.fail_link = None; self.fail_module = False
         self.fail_query = False; self.fail_graph = False; self.concurrent = False
         self.next_id = 100; self.auto_input = False; self.initial_input = default; self.no_dsp = False
-        self.playback_sinks = None; self.carries_signal = True; self.probes = []; self.probe_choice = None
-        self.notices = []
+        self.carries_signal = True; self.probes = []; self.probe_choice = None
+        self.notices = []; self.feeds = {m.MAPPING}; self.routes = 0; self.route_choice = None
     def objects(self, kind):
         if self.fail_query: raise RuntimeError('live Pulse query failed')
-        if kind == 'sources': return ([] if self.no_dsp else [obj(DSP)]) + [obj('usb-mic')] + ([copy.deepcopy(self.monitor)] if self.existing else [])
-        if kind == 'sinks':
-            playback = self.playback_sinks if self.playback_sinks is not None else [obj('speakers')]
-            return playback + ([copy.deepcopy(self.sink)] if self.existing else [])
-        if kind == 'modules': return [self.module] if self.module else []
+        if kind == 'sources':
+            legacy = [copy.deepcopy(self.legacy[1])] if self.legacy else []
+            return ([] if self.no_dsp else [obj(DSP)]) + [obj('usb-mic')] + ([copy.deepcopy(self.mapping)] if self.existing else []) + legacy
+        if kind == 'sinks': return [obj('speakers')] + ([copy.deepcopy(self.legacy[0])] if self.legacy else [])
         raise AssertionError(kind)
-    def modules(self): return [self.module] if self.module else []
+    def modules(self):
+        return [module for module in (self.module, LEGACY_MODULE if self.legacy else None) if module]
     def graph(self):
         if self.fail_graph: raise RuntimeError('live graph query failed')
         nodes = [dict(id=1, type='PipeWire:Interface:Node', info={'props': {'node.name': DSP}})]
         ports = [(11, 1, 'capture_AUX0')]
         if self.existing:
-            nodes.append(dict(id=2, type='PipeWire:Interface:Node', info={'props': {'node.name': m.SINK}}))
-            ports += [(21, 2, 'playback_FL'), (22, 2, 'playback_FR')]
+            nodes.append(dict(id=2, type='PipeWire:Interface:Node', info={'props': {'node.name': m.MAPPING}}))
+            ports += [(21, 2, 'input_FL'), (22, 2, 'input_FR')]
         for id_, node, name in ports:
             if name != self.missing: nodes.append(dict(id=id_, type='PipeWire:Interface:Port', info={'props': {'node.id': node, 'port.name': name}}))
         for id_, (input_, owner) in self.linked.items():
             nodes.append(dict(id=id_, type='PipeWire:Interface:Link', info={'output-port-id': 11, 'input-port-id': input_, 'state': 'paused', 'props': {m.OWNER: owner}}))
-        if self.concurrent and len(self.linked) == 2: self.default = 'usb-mic'; self.output = 'headphones'
+        if self.concurrent and len(self.linked) == 2: self.default = 'usb-mic'
         return nodes
     def pause(self): pass
     def notify(self, *args): self.notices.append(args)
@@ -59,6 +63,10 @@ class Audio:
         self.probes.append(source)
         if self.probe_choice is not None: self.default = self.probe_choice
         return self.carries_signal
+    def route(self):
+        self.routes += 1
+        if self.route_choice is not None: self.default = self.route_choice
+        return self.feeds
     def run(self, *args):
         self.calls.append(args)
         if args[0] == 'pw-link':
@@ -70,25 +78,27 @@ class Audio:
         assert args[0] == 'pactl', args
         command = args[1]
         if command == 'get-default-source': return self.default
-        if command == 'get-default-sink': return self.output
         if command == 'load-module':
             if self.fail_module: raise RuntimeError('module failed')
-            self.module = dict(index=42, name='module-null-sink', argument=' '.join(args[2:]))
-            self.existing = True; self.output = m.SINK
-            if self.auto_input: self.default = m.MONITOR
-            self.sink = obj(m.SINK, 65536, False); self.monitor = obj(m.MONITOR, 65536, False)
+            self.module = dict(index='42', name='module-null-sink', argument=' '.join(args[3:]))
+            assert args[2] == 'module-null-sink' and 'media.class=Audio/Source/Virtual' in args[3:], args
+            self.existing = True
+            if self.auto_input: self.default = m.MAPPING
+            self.mapping = obj(m.MAPPING, 65536, False)
             return '42'
         if command == 'unload-module':
+            if self.legacy and args[2] == LEGACY_MODULE['index']:
+                self.legacy = None
+                if self.default == m.LEGACY: self.default = 'headphones.monitor'
+                return ''
             self.existing = False; self.module = None; self.linked = {}
-            if self.default == m.MONITOR: self.default = self.initial_input
+            if self.default == m.MAPPING: self.default = self.initial_input
             return ''
         if command == 'set-default-source': self.default = args[2]; return ''
-        if command == 'set-default-sink': self.output = args[2]; return ''
-        target = self.sink if args[2] == m.SINK else self.monitor
-        assert args[2] in (m.SINK, m.MONITOR), 'DSP/user device must never be modified'
-        if command.endswith('-volume'):
-            target['volume'] = {str(i): {'value': int(value)} for i, value in enumerate(args[3:])}; return ''
-        if command.endswith('-mute'): target['mute'] = args[3] == '1'; return ''
+        assert args[2] == m.MAPPING, 'DSP/user device must never be modified'
+        if command == 'set-source-volume':
+            self.mapping['volume'] = {str(i): {'value': int(value)} for i, value in enumerate(args[3:])}; return ''
+        if command == 'set-source-mute': self.mapping['mute'] = args[3] == '1'; return ''
         raise AssertionError(args)
 with tempfile.TemporaryDirectory() as temporary:
     directory = Path(temporary)
@@ -96,7 +106,7 @@ with tempfile.TemporaryDirectory() as temporary:
         path = directory / ('state-' + str(len(list(directory.iterdir()))) + '.json'); return path
     # Numeric IDs may be recycled while the transaction is running. Old links
     # alone are not proof that the named DSP and stereo ports still own them.
-    for missing in ('capture_AUX0', 'playback_FL', 'playback_FR'):
+    for missing in ('capture_AUX0', 'input_FL', 'input_FR'):
         class RecreatedAudio(Audio):
             def graph(self):
                 graph = super().graph()
@@ -114,96 +124,93 @@ with tempfile.TemporaryDirectory() as temporary:
         else:
             raise AssertionError('recycled endpoint IDs accepted')
         assert audio.default == DSP and not audio.existing and not audio.linked
-        assert ('pactl', 'set-default-source', m.MONITOR) not in audio.calls
-    # Simulate a choice made during the final graph query, after output has
-    # been restored. The last default-source read must observe that new choice.
+        assert ('pactl', 'set-default-source', m.MAPPING) not in audio.calls
+    # A choice made during the final graph query must be observed.
     class FinalQueryChoice(Audio):
         def __init__(self):
             super().__init__()
             self.choice_injected = False
         def graph(self):
             graph = super().graph()
-            if ('pactl', 'set-default-sink', 'speakers') in self.calls:
+            if self.probes:
                 self.default = 'usb-mic'
                 self.choice_injected = True
             return graph
     audio = FinalQueryChoice()
     m.reconcile(audio, state())
     assert audio.choice_injected and audio.default == 'usb-mic'
-    assert ('pactl', 'set-default-source', m.MONITOR) not in audio.calls
-    for selected in (DSP, 'usb-mic', m.MONITOR):
+    assert ('pactl', 'set-default-source', m.MAPPING) not in audio.calls
+    for selected in (DSP, 'usb-mic', m.MAPPING):
         audio = Audio(True, selected); audio.linked = {90: (21, 'existing'), 91: (22, 'existing')}
-        before = copy.deepcopy((audio.sink, audio.monitor)); saved = state()
+        before = copy.deepcopy(audio.mapping); saved = state()
         m.reconcile(audio, saved); m.reconcile(audio, saved)
-        assert (audio.sink, audio.monitor) == before, '42 percent and mute must survive repeat mapping'
+        assert audio.mapping == before, '42 percent and mute must survive repeat mapping'
         assert not any('volume' in call[1] or 'mute' in call[1] for call in audio.calls)
-        assert audio.default == (m.MONITOR if selected == DSP else selected)
+        assert audio.default == (m.MAPPING if selected == DSP else selected)
         assert sum(call[1] == 'set-default-source' for call in audio.calls) == (1 if selected == DSP else 0)
-    # A mapped monitor that carries only digital silence (#505) never becomes
-    # the default input, and a default already left on it returns to the DSP.
+    # A mapping that carries only digital silence (#505) never becomes the
+    # default input, and a default already left on it returns to the DSP.
     # The mapping itself stays, so events do not rebuild it.
     for selected in (DSP, ''):
         audio = Audio(default=selected); audio.carries_signal = False
         try: m.reconcile(audio, state())
         except RuntimeError as error: assert 'no signal' in str(error), error
         else: raise AssertionError('a silent mapping must be reported')
-        assert audio.default == selected and audio.probes == [m.MONITOR]
+        assert audio.default == selected and audio.probes == [m.MAPPING]
         assert audio.existing and len(audio.linked) == 2, 'a silent mapping must not be rolled back'
-    def mapped(default, signal=True, monitor_mute=False):
+    def mapped(default, signal=True, mute=False):
         audio = Audio(True, default); audio.linked = {90: (21, 'existing'), 91: (22, 'existing')}
-        audio.sink = obj(m.SINK, 65536, False); audio.monitor = obj(m.MONITOR, 65536, monitor_mute)
+        audio.mapping = obj(m.MAPPING, 65536, mute)
         audio.carries_signal = signal
         return audio
-    audio = mapped(m.MONITOR, signal=False)
+    audio = mapped(m.MAPPING, signal=False)
     try: m.reconcile(audio, state())
     except RuntimeError as error: assert 'no signal' in str(error), error
     else: raise AssertionError('a silent default must be reported')
     assert audio.default == DSP and audio.linked == {90: (21, 'existing'), 91: (22, 'existing')}
-    audio = mapped(m.MONITOR)
+    audio = mapped(m.MAPPING)
     m.reconcile(audio, state())
-    assert audio.default == m.MONITOR and audio.probes == [m.MONITOR], 'a live mapped default stays'
-    # A muted mapping is the user's microphone mute: never sampled, never
-    # swapped for the unmuted DSP, and still selected after a default reset.
-    # The mute key mutes the sink side while the monitor is the default.
-    for selected in (m.MONITOR, DSP):
-        for side in ('monitor', 'sink'):
-            audio = mapped(selected, signal=False)
-            getattr(audio, side)['mute'] = True
-            m.reconcile(audio, state())
-            assert audio.default == m.MONITOR and not audio.probes, (selected, side)
-            # Muting while the monitor is sampled silences it; that is still a mute.
-            audio = mapped(selected, signal=False)
-            sample = audio.signal
-            audio.signal = lambda source, side=side, audio=audio, sample=sample: (getattr(audio, side).update(mute=True), sample(source))[1]
-            m.reconcile(audio, state())
-            assert audio.default == m.MONITOR and audio.probes == [m.MONITOR], (selected, side)
+    assert audio.default == m.MAPPING and audio.probes == [m.MAPPING], 'a live mapped default stays'
+    # A muted mapping is the user's microphone mute (the mute key mutes the
+    # default source): never sampled, never swapped for the unmuted DSP, and
+    # still selected after a default reset.
+    for selected in (m.MAPPING, DSP):
+        audio = mapped(selected, signal=False, mute=True)
+        m.reconcile(audio, state())
+        assert audio.default == m.MAPPING and not audio.probes, selected
+        # Muting while the mapping is sampled silences it; that is still a mute.
+        audio = mapped(selected, signal=False)
+        sample = audio.signal
+        audio.signal = lambda source, audio=audio, sample=sample: (audio.mapping.update(mute=True), sample(source))[1]
+        m.reconcile(audio, state())
+        assert audio.default == m.MAPPING and audio.probes == [m.MAPPING], selected
     # A sample that could not be taken changes nothing and is reported.
-    for selected in (DSP, m.MONITOR):
+    for selected in (DSP, m.MAPPING):
         audio = mapped(selected, signal=None)
         try: m.reconcile(audio, state())
         except RuntimeError as error: assert 'Could not sample' in str(error), error
         else: raise AssertionError('an unsampled mapping must be reported')
         assert audio.default == selected
     # The supervisor samples a default mapping once, not on every event.
-    checked = set(); audio = mapped(m.MONITOR)
+    checked = set(); audio = mapped(m.MAPPING)
     m.reconcile(audio, state(), checked=checked); m.reconcile(audio, state(), checked=checked)
-    assert audio.probes == [m.MONITOR] and audio.default == m.MONITOR
-    audio = mapped(m.MONITOR); m.reconcile(audio, state()); m.reconcile(audio, state())
-    assert audio.probes == [m.MONITOR, m.MONITOR]
+    assert audio.probes == [m.MAPPING] and audio.default == m.MAPPING and audio.routes == 1
+    audio = mapped(m.MAPPING); m.reconcile(audio, state()); m.reconcile(audio, state())
+    assert audio.probes == [m.MAPPING, m.MAPPING]
     # After an audio restart the mapping is rebuilt, possibly on recycled port
-    # IDs, while the configured default still names its monitor.
-    audio = Audio(default=m.MONITOR); audio.carries_signal = False
+    # IDs, while the configured default still names it.
+    audio = Audio(default=m.MAPPING); audio.carries_signal = False
     try: m.reconcile(audio, state(), checked=checked)
     except RuntimeError as error: assert 'no signal' in str(error), error
     else: raise AssertionError('a rebuilt silent mapping must be sampled')
-    assert audio.probes == [m.MONITOR] and audio.default == DSP
+    assert audio.probes == [m.MAPPING] and audio.default == DSP
     # Other inputs are the user's; the microphone is not even opened for them.
     audio = Audio(default='usb-mic'); audio.carries_signal = False
     m.reconcile(audio, state())
-    assert audio.default == 'usb-mic' and not audio.probes
-    # A choice made while the monitor is sampled wins over the result.
+    assert audio.default == 'usb-mic' and not audio.probes and not audio.routes
+    # A choice made while the mapping is sampled wins over the result.
     for signal in (True, False):
-        for selected in (DSP, m.MONITOR):
+        for selected in (DSP, m.MAPPING):
             audio = mapped(selected, signal); audio.probe_choice = 'usb-mic'
             try: m.reconcile(audio, state())
             except RuntimeError: assert not signal
@@ -213,13 +220,91 @@ with tempfile.TemporaryDirectory() as temporary:
     try: m.reconcile(audio, state())
     except m.Deferred: pass
     else: raise AssertionError('Apple desktop without a mic array should defer safely')
-    assert not audio.calls[2:] and audio.default == 'usb-mic'
+    assert audio.calls == [('pactl', 'get-default-source')] and audio.default == 'usb-mic'
+    # #99: apps that name no device follow the default route. A selected mapping
+    # is checked once through that route; if WirePlumber links such a capture
+    # elsewhere, the DSP becomes the default instead.
+    checked = set(); audio = Audio(); m.reconcile(audio, state(), checked=checked)
+    assert audio.default == m.MAPPING and audio.routes == 1
+    m.reconcile(audio, state(), checked=checked)
+    assert audio.routes == 1, 'the route is checked once per mapping'
+    audio = Audio(); audio.feeds = {'audio_effect.j416-convolver.monitor'}
+    try: m.reconcile(audio, state())
+    except RuntimeError as error: assert 'reach audio_effect.j416-convolver.monitor' in str(error), error
+    else: raise AssertionError('a misrouted default must be reported')
+    assert audio.default == DSP
+    checked = set(); audio = Audio(); audio.feeds = {'audio_effect.j416-convolver.monitor'}
+    for attempt in range(3):
+        try: m.reconcile(audio, state(), checked=checked)
+        except RuntimeError: pass
+    assert audio.default == DSP and audio.routes == 1, 'a misrouted mapping is not reselected on every event'
+    stalled = [dict(id=1, type='PipeWire:Interface:Node', info={'props': {'node.name': m.MAPPING}}),
+               dict(id=2, type='PipeWire:Interface:Node', info={'props': {'node.name': m.ROUTE_CLIENT}}),
+               dict(id=41, type='PipeWire:Interface:Link', info={'output-node-id': 1, 'input-node-id': 2, 'state': 'init'}),
+               dict(id=42, type='PipeWire:Interface:Link', info={'output-node-id': 9, 'input-node-id': 2, 'state': 'active'}),
+               dict(id=43, type='PipeWire:Interface:Link', info={'output-node-id': 1, 'input-node-id': 2, 'state': 'error'})]
+    assert m.sources_of(stalled, m.ROUTE_CLIENT) == {m.MAPPING}, 'unknown nodes and failed links are not feeds'
+    audio = Audio(); audio.feeds = None
+    m.reconcile(audio, state())
+    assert audio.default == m.MAPPING, 'an unknown route changes nothing'
+    audio = Audio(); audio.feeds = {'speakers.monitor'}; audio.route_choice = 'usb-mic'
+    try: m.reconcile(audio, state())
+    except RuntimeError: pass
+    assert audio.default == 'usb-mic', 'a choice made during the route check wins'
+    graph = [dict(id=1, type='PipeWire:Interface:Node', info={'props': {'node.name': m.MAPPING}}),
+             dict(id=2, type='PipeWire:Interface:Node', info={'props': {'node.name': 'parec', 'application.name': m.ROUTE_CLIENT}}),
+             dict(id=3, type='PipeWire:Interface:Node', info={'props': {'node.name': 'other'}}),
+             dict(id=11, type='PipeWire:Interface:Port', info={'props': {'node.id': 1}}),
+             dict(id=21, type='PipeWire:Interface:Port', info={'props': {'node.id': 2}}),
+             dict(id=31, type='PipeWire:Interface:Port', info={'props': {'node.id': 3}}),
+             dict(id=41, type='PipeWire:Interface:Link', info={'output-port-id': 11, 'input-port-id': 21}),
+             dict(id=42, type='PipeWire:Interface:Link', info={'output-port-id': 11, 'input-port-id': 31})]
+    assert m.sources_of(graph, m.ROUTE_CLIENT) == {m.MAPPING}
+    # An earlier version mapped into a null sink whose monitor was the default
+    # input. It is replaced by the source, keeping its selection and its gain
+    # (the two controls in series, and a mute on either side).
+    for selected, expected in ((m.LEGACY, m.MAPPING), ('usb-mic', 'usb-mic')):
+        audio = Audio(default=selected)
+        audio.legacy = (obj(m.MAPPING, 32768, False), obj(m.LEGACY, 65536, True))
+        saved = state(); m.reconcile(audio, saved)
+        assert ('pactl', 'unload-module', '41') in audio.calls and audio.legacy is None
+        assert audio.existing and audio.default == expected, (selected, audio.default)
+        assert m.gain(audio.mapping) == {'volume': [32768, 32768], 'mute': True}
+        assert json.loads(saved.read_text()) == {'source': {'volume': [32768, 32768], 'mute': True}}
+    # With the array missing the old mapping stays until it returns; a failure
+    # after the swap still leaves a working default that the next pass maps.
+    audio = Audio(default=m.LEGACY); audio.no_dsp = True
+    audio.legacy = (obj(m.MAPPING, 65536, False), obj(m.LEGACY, 65536, False))
+    try: m.reconcile(audio, state())
+    except m.Deferred: pass
+    assert audio.legacy and audio.default == m.LEGACY
+    audio.no_dsp = False; audio.missing = 'input_FR'; saved = state()
+    try: m.reconcile(audio, saved)
+    except RuntimeError: pass
+    else: raise AssertionError('missing port accepted')
+    assert audio.legacy is None and audio.default == DSP
+    audio.missing = None; m.reconcile(audio, saved)
+    assert audio.default == m.MAPPING
+    audio = Audio(); audio.legacy = (obj(m.MAPPING), obj(m.LEGACY))
+    stranger = dict(LEGACY_MODULE, argument='sink_name=omarchy_asahi_mic')
+    audio.modules = lambda: [stranger]
+    try: m.reconcile(audio, state())
+    except RuntimeError as error: assert 'does not own' in str(error), error
+    else: raise AssertionError('a foreign sink must not be replaced')
+    assert not any(call[1] == 'unload-module' for call in audio.calls if call[0] == 'pactl')
+    audio = Audio(True); audio.module = dict(index='40', name='module-null-sink', argument='sink_name=omarchy_asahi_mic media.class=Audio/Source/Virtual')
+    try: m.reconcile(audio, state())
+    except RuntimeError as error: assert 'does not own' in str(error), error
+    else: raise AssertionError('a foreign source must not be mapped into')
+    assert not audio.linked
+    legacy_state = state(); legacy_state.write_text(json.dumps({'sink': {'volume': [65536, 65536], 'mute': False}, 'monitor': {'volume': [32768, 32768], 'mute': False}}))
+    audio = Audio(); m.reconcile(audio, legacy_state)
+    assert m.gain(audio.mapping) == {'volume': [32768, 32768], 'mute': False}, 'legacy saved gain carries over'
     # The array's DSP can vanish after mapping (#99: WirePlumber left its
-    # filter half-built on the M2 Max). The orphaned monitor carries silence:
+    # filter half-built on the M2 Max). The mapping then carries silence:
     # hand capture to a plugged-in real input rather than WirePlumber's
-    # fallback (another monitor), move playback off the mapping sink, tell the
-    # user once the loss lasts, and select the mapping again when the array
-    # returns unless the user chose otherwise.
+    # fallback (a monitor), tell the user once the loss lasts, and select the
+    # mapping again when the array returns unless the user chose otherwise.
     def source(name, priority, klass='sound', available=None):
         ports = [{'name': '[In] Port', 'availability': available}] if available else []
         return dict(name=name, ports=ports, active_port='[In] Port' if available else None, monitor_source='',
@@ -234,7 +319,7 @@ with tempfile.TemporaryDirectory() as temporary:
         inputs = [unplugged]; ignored = ()
         def objects(self, kind):
             if kind == 'sources':
-                return ([] if self.no_dsp else [obj(DSP)]) + [headphones_monitor, raw, *self.inputs] + ([copy.deepcopy(self.monitor)] if self.existing else [])
+                return ([] if self.no_dsp else [obj(DSP)]) + [headphones_monitor, raw, *self.inputs] + ([copy.deepcopy(self.mapping)] if self.existing else [])
             return super().objects(kind)
         def run(self, *args):
             if args[1:2] == ('set-default-source',) and args[2] in self.ignored:
@@ -242,8 +327,8 @@ with tempfile.TemporaryDirectory() as temporary:
             return super().run(*args)
     def lost(inputs=(usb, other)):
         m.outage.update(since=None, notified=False)
-        audio = LostDsp(True, m.MONITOR); audio.linked = {90: (21, 'existing'), 91: (22, 'existing')}
-        audio.sink = obj(m.SINK, 65536, False); audio.monitor = obj(m.MONITOR, 65536, False)
+        audio = LostDsp(True, m.MAPPING); audio.linked = {90: (21, 'existing'), 91: (22, 'existing')}
+        audio.mapping = obj(m.MAPPING, 65536, False)
         audio.inputs = [dict(item) for item in inputs]; audio.no_dsp = True
         return audio
     def deferred(audio, saved):
@@ -252,12 +337,13 @@ with tempfile.TemporaryDirectory() as temporary:
         else: raise AssertionError('a missing array must defer')
     def marker(saved):
         return m.claim(saved)
+    assert m.real_inputs([obj(m.MAPPING), usb]) == ['usb-mic'], 'the mapping is never its own fallback'
     later = time.monotonic() + m.OUTAGE_GRACE + 1
-    for inputs, expected in (([unplugged], m.MONITOR), ([unplugged, usb], 'usb-mic'), ([plugged], 'headset')):
-        audio = lost(inputs); audio.output = m.SINK; saved = state()
+    for inputs, expected in (([unplugged], m.MAPPING), ([unplugged, usb], 'usb-mic'), ([plugged], 'headset')):
+        audio = lost(inputs); saved = state()
         deferred(audio, saved)
-        assert audio.default == expected and audio.output == 'speakers', (audio.default, audio.output)
-        assert marker(saved) == (None if expected == m.MONITOR else expected)
+        assert audio.default == expected, audio.default
+        assert marker(saved) == (None if expected == m.MAPPING else expected)
         assert not audio.notices and m.outage_due() is not None, 'a fresh loss is not announced yet'
         with mock.patch.object(m.time, 'monotonic', return_value=later):
             deferred(audio, saved); deferred(audio, saved)
@@ -265,7 +351,7 @@ with tempfile.TemporaryDirectory() as temporary:
         assert m.outage_due() is None
     audio.no_dsp = False
     m.reconcile(audio, saved)
-    assert audio.default == m.MONITOR and audio.probes == [m.MONITOR] and marker(saved) is None
+    assert audio.default == m.MAPPING and audio.probes == [m.MAPPING] and marker(saved) is None
     assert m.outage['since'] is None, 'a present array ends the outage'
     # A short loss (card or audio restart) is never announced.
     audio = lost(); saved = state(); deferred(audio, saved)
@@ -280,18 +366,13 @@ with tempfile.TemporaryDirectory() as temporary:
     audio.existing = False; audio.linked = {}; audio.module = None
     deferred(audio, saved)
     assert m.outage_due() is None and not audio.notices
-    # Without a mapping, a persisted mapping sink still leaves playback.
-    audio = lost(); audio.existing = False; audio.linked = {}; audio.output = m.SINK
-    deferred(audio, state())
-    assert audio.output == 'speakers' and not audio.notices
     # A muted mapping is the user's mute; an ignored switch is not a claim.
-    for side in ('sink', 'monitor'):
-        audio = lost(); getattr(audio, side)['mute'] = True; saved = state()
-        deferred(audio, saved)
-        assert audio.default == m.MONITOR and marker(saved) is None, side
+    audio = lost(); audio.mapping['mute'] = True; saved = state()
+    deferred(audio, saved)
+    assert audio.default == m.MAPPING and marker(saved) is None
     audio = lost(); audio.ignored = ('usb-mic',); saved = state()
     deferred(audio, saved)
-    assert audio.default == m.MONITOR and marker(saved) is None
+    assert audio.default == m.MAPPING and marker(saved) is None
     # Choosing another real input ends the claim, even after an audio restart
     # removed the mapping; choosing the fallback again is then the user's own.
     for restarted in (False, True):
@@ -308,7 +389,7 @@ with tempfile.TemporaryDirectory() as temporary:
         deferred(audio, saved)
         assert audio.default == expected and marker(saved) == (expected if remaining else 'usb-mic')
         audio.no_dsp = False; m.reconcile(audio, saved)
-        assert audio.default == m.MONITOR and marker(saved) is None
+        assert audio.default == m.MAPPING and marker(saved) is None
     # On return, a silent or unsampled mapping leaves the working fallback.
     for signal, error in ((False, 'no signal'), (None, 'Could not sample')):
         audio = lost(); saved = state(); deferred(audio, saved)
@@ -318,14 +399,14 @@ with tempfile.TemporaryDirectory() as temporary:
         else: raise AssertionError('a failed return must be reported')
         assert audio.default == 'usb-mic' and marker(saved) == 'usb-mic', signal
         audio.carries_signal = True; m.reconcile(audio, saved)
-        assert audio.default == m.MONITOR and marker(saved) is None, 'a later live mapping is selected again'
+        assert audio.default == m.MAPPING and marker(saved) is None, 'a later live mapping is selected again'
     # A muted fallback waits: the array never unmutes capture.
     audio = lost(); saved = state(); deferred(audio, saved)
     audio.inputs[0]['mute'] = True; audio.no_dsp = False
     m.reconcile(audio, saved)
     assert audio.default == 'usb-mic' and not audio.probes and marker(saved) == 'usb-mic'
     audio.inputs[0]['mute'] = False; m.reconcile(audio, saved)
-    assert audio.default == m.MONITOR and marker(saved) is None
+    assert audio.default == m.MAPPING and marker(saved) is None
     # A choice seen during setup drops the claim.
     class Diverging(LostDsp):
         def graph(self):
@@ -342,47 +423,22 @@ with tempfile.TemporaryDirectory() as temporary:
     m.reconcile(audio, saved)
     assert audio.default == 'other-mic' and marker(saved) is None
     m.outage.update(since=None, notified=False)
-    # WirePlumber persists the mapping sink as the session default. It is not
-    # a speaker; pick a real sink even when that is what get-default-sink returns.
-    audio = Audio(existing=True, default=DSP)
-    audio.output = m.SINK
-    audio.linked = {90: (21, 'existing'), 91: (22, 'existing')}
-    m.reconcile(audio, state())
-    assert audio.output == 'speakers', 'persisted mapping sink must not stay the default output'
-    def playback(name, priority, ports=None, active=None):
-        return dict(name=name, volume={'front-left': {'value': 1}, 'front-right': {'value': 1}}, mute=False,
-                    ports=ports or [], active_port=active, properties={'priority.session': str(priority)})
-    jack = playback('headphones', 1000, ports=[{'name': '[Out] Headphones', 'availability': 'not available'}], active='[Out] Headphones')
-    speakers = playback('speakers', 850)
-    audio = Audio(existing=True, default=DSP)
-    audio.output = m.SINK
-    audio.linked = {90: (21, 'existing'), 91: (22, 'existing')}
-    audio.playback_sinks = [jack, speakers]
-    m.reconcile(audio, state())
-    assert audio.output == 'speakers', 'unavailable headphone jack must not beat the speaker DSP'
-    jack_in = playback('headphones', 1000, ports=[{'name': '[Out] Headphones', 'availability': 'available'}], active='[Out] Headphones')
-    audio = Audio(existing=True, default=DSP)
-    audio.output = m.SINK
-    audio.linked = {90: (21, 'existing'), 91: (22, 'existing')}
-    audio.playback_sinks = [speakers, jack_in]
-    m.reconcile(audio, state())
-    assert audio.output == 'headphones', 'a plugged headphone jack outranks the speaker DSP'
     for selected in (DSP, 'usb-mic', ''):
         for failure in (False, True):
             audio = Audio(default=selected); audio.auto_input = True
-            if failure: audio.missing = 'playback_FR'
+            if failure: audio.missing = 'input_FR'
             try: m.reconcile(audio, state())
             except RuntimeError:
                 assert failure
             else: assert not failure
-            expected = selected if failure or selected == 'usb-mic' else m.MONITOR
+            expected = selected if failure or selected == 'usb-mic' else m.MAPPING
             assert audio.default == expected, 'module auto-selection must not steal a source or survive failed links'
-    for missing in ('capture_AUX0', 'playback_FL', 'playback_FR'):
+    for missing in ('capture_AUX0', 'input_FL', 'input_FR'):
         audio = Audio(); audio.missing = missing
         try: m.reconcile(audio, state())
         except RuntimeError: pass
         else: raise AssertionError('missing port accepted')
-        assert audio.default == DSP and not audio.existing and audio.output == 'speakers'
+        assert audio.default == DSP and not audio.existing
     for existing in (False, True):
         audio = Audio(existing); audio.fail_link = 22
         if existing: audio.linked = {90: (21, 'existing')}
@@ -399,13 +455,12 @@ with tempfile.TemporaryDirectory() as temporary:
         assert audio.default == DSP and not audio.existing
     audio = Audio(); audio.concurrent = True
     m.reconcile(audio, state())
-    assert audio.default == 'usb-mic' and audio.output == 'headphones', 'concurrent user selections must win'
-    audio = Audio(True, m.MONITOR); audio.linked = {90: (21, 'existing'), 91: (22, 'existing')}
+    assert audio.default == 'usb-mic', 'concurrent user selections must win'
+    audio = Audio(True, m.MAPPING); audio.linked = {90: (21, 'existing'), 91: (22, 'existing')}
     saved = state(); m.reconcile(audio, saved)
-    audio.existing = False; audio.linked = {}; audio.default = DSP
+    audio.existing = False; audio.linked = {}; audio.module = None; audio.default = DSP
     m.reconcile(audio, saved)
-    assert m.gain(audio.monitor) == {'volume': [27525, 27525], 'mute': True}, 'restart must recover owned mapped gain'
-    assert m.gain(audio.sink) == {'volume': [27525, 27525], 'mute': True}
+    assert m.gain(audio.mapping) == {'volume': [27525, 27525], 'mute': True}, 'restart must recover owned mapped gain'
     bad = state(); bad.write_text('{invalid')
     audio = Audio()
     try: m.reconcile(audio, bad)
@@ -433,13 +488,13 @@ with tempfile.TemporaryDirectory() as temporary:
     passes = [0]
     def operation():
         passes[0] += 1
-        if passes[0] == 2: audio.existing = False; audio.linked = {}; audio.default = DSP
+        if passes[0] == 2: audio.existing = False; audio.linked = {}; audio.module = None; audio.default = DSP
         if passes[0] == 3: raise KeyboardInterrupt()
         m.reconcile(audio, saved)
     with mock.patch.object(m.time, 'sleep'):
         try: m.supervise(operation, wait=lambda: None)
         except KeyboardInterrupt: pass
-    assert audio.existing and len(audio.linked) == 2 and m.gain(audio.monitor)['mute'], 'supervisor must rebuild lost nodes and gain'
+    assert audio.existing and len(audio.linked) == 2 and m.gain(audio.mapping)['mute'], 'supervisor must rebuild lost nodes and gain'
     audio = Audio(); saved = state(); passes = [0]
     def retry_operation():
         passes[0] += 1
@@ -470,7 +525,7 @@ with tempfile.TemporaryDirectory() as temporary:
     sub = feed('exit 0'); elapsed = timed(sub)
     assert elapsed < 0.5 and sub.process is None, 'a lost subscription must yield a repair and resubscribe later'
     assert timed(m.Subscription(command=['/nonexistent/pactl'], retry=0.05)) < 0.5, 'a missing subscriber must degrade to a paced retry'
-# The live probe reads float samples from the monitor through parec: any
+# The live probe reads float samples from the mapping through parec: any
 # non-zero sample, however quiet, is signal; zeros (either sign) are digital
 # silence; a recorder that yields nothing is unknown.
 with tempfile.TemporaryDirectory() as temporary:
@@ -478,16 +533,16 @@ with tempfile.TemporaryDirectory() as temporary:
     def probe(script, timeout=1.0):
         fake.write_text('#!/bin/bash\n' + script + '\n'); fake.chmod(0o755)
         with mock.patch.dict(os.environ, {'PATH': temporary + os.pathsep + os.environ['PATH']}):
-            start = time.monotonic(); result = m.Audio().signal(m.MONITOR, timeout); return result, time.monotonic() - start
+            start = time.monotonic(); result = m.Audio().signal(m.MAPPING, timeout); return result, time.monotonic() - start
     floats = 'python3 -c "import struct, sys; sys.stdout.buffer.write(struct.pack(\'<%df\' % {0}, *{1}))"; sleep 5'
-    result, elapsed = probe('[[ $1 == --device=omarchy_asahi_mic.monitor && $* == *--format=float32le* ]] || exit 1; ' + floats.format(2049, '[0.0] * 2048 + [1e-7]'))
+    result, elapsed = probe('[[ $1 == --device=omarchy_asahi_mic && $* == *--format=float32le* ]] || exit 1; ' + floats.format(2049, '[0.0] * 2048 + [1e-7]'))
     assert result is True and elapsed < 0.9, ('a quiet non-zero sample is signal', elapsed)
     result, elapsed = probe(floats.format(8192, '[0.0, -0.0] * 4096'))
     assert result is False and 0.9 <= elapsed < 2.5, ('digital silence is not signal', elapsed)
     result, elapsed = probe('exit 1')
     assert result is None and elapsed < 0.9, 'a recorder that yields nothing is unknown'
     with mock.patch.dict(os.environ, {'PATH': str(Path(temporary) / 'missing')}):
-        assert m.Audio().signal(m.MONITOR, 1.0) is None, 'a missing recorder is unknown'
+        assert m.Audio().signal(m.MAPPING, 1.0) is None, 'a missing recorder is unknown'
 with mock.patch.object(m.Audio, 'run', return_value='536870912\tmodule-null-sink\tsink_name=omarchy_asahi_mic omarchy.asahi-mic.owner=test\t1'):
     assert m.Audio().modules()[0]['index'] == '536870912'
 listing = '536870911\tlibpipewire-module-rt\t{\n            nice.level    = -11\n        }\t\n536870912\tmodule-null-sink\tsink_name=omarchy_asahi_mic\t1'

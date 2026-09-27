@@ -20,9 +20,13 @@ import tempfile
 import time
 import uuid
 
-SINK = 'omarchy_asahi_mic'
-MONITOR = SINK + '.monitor'
+# The mapping is a virtual source. It used to be a null sink whose monitor was
+# the default input, but pipewire-pulse clients that name no device (most apps)
+# were then linked to the default sink's monitor instead: silence (#99).
+MAPPING = 'omarchy_asahi_mic'
+LEGACY = MAPPING + '.monitor'
 OWNER = 'omarchy.asahi-mic.owner'
+ROUTE_CLIENT = 'omarchy-asahi-mic-route'
 DSP = re.compile(r'effect_output\.j[0-9]+-mic')
 OUTAGE_GRACE = 10.0
 outage = dict(since=None, notified=False)
@@ -108,6 +112,47 @@ class Audio:
             process.stdout.close()
 
 
+    def route(self, timeout=3.0):
+        # Which nodes feed a capture that names no device, as most apps do.
+        # None: the capture never started or was not linked in time.
+        try:
+            process = subprocess.Popen(['parec', '--raw', '--format=float32le', '--channels=2', '--rate=48000',
+                                        '--latency-msec=20', '--client-name=' + ROUTE_CLIENT],
+                                       stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except OSError:
+            return None
+        try:
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if select.select([process.stdout], [], [], 0.1)[0] and not os.read(process.stdout.fileno(), 65536):
+                    return None
+                feeds = sources_of(self.graph(), ROUTE_CLIENT)
+                if feeds:
+                    return feeds
+            return None
+        finally:
+            process.kill()
+            process.wait()
+            process.stdout.close()
+
+
+def sources_of(graph, client):
+    nodes = {obj['id']: obj.get('info', {}).get('props', {}) for obj in graph if obj.get('type', '').endswith(':Node')}
+    ports = {obj['id']: obj.get('info', {}).get('props', {}).get('node.id') for obj in graph if obj.get('type', '').endswith(':Port')}
+    client_nodes = {id_ for id_, props in nodes.items() if client in (props.get('node.name'), props.get('application.name'))}
+    feeds = set()
+    for obj in graph:
+        info = obj.get('info', {})
+        if not obj.get('type', '').endswith(':Link') or info.get('state') == 'error':
+            continue
+        if info.get('input-node-id', ports.get(info.get('input-port-id'))) not in client_nodes:
+            continue
+        name = nodes.get(info.get('output-node-id', ports.get(info.get('output-port-id'))), {}).get('node.name')
+        if name:
+            feeds.add(name)
+    return feeds
+
+
 def port(graph, node_name, port_name):
     nodes = {obj['id'] for obj in graph if obj.get('type', '').endswith(':Node')
              and obj.get('info', {}).get('props', {}).get('node.name') == node_name}
@@ -138,11 +183,14 @@ def audible(obj):
 
 
 def save_state(audio, path):
-    sinks = {obj['name']: obj for obj in audio.objects('sinks')}
     sources = {obj['name']: obj for obj in audio.objects('sources')}
-    if SINK not in sinks or MONITOR not in sources:
+    if MAPPING not in sources:
         return
-    data = json.dumps(dict(sink=gain(sinks[SINK]), monitor=gain(sources[MONITOR])), sort_keys=True)
+    write_state(path, gain(sources[MAPPING]))
+
+
+def write_state(path, value):
+    data = json.dumps(dict(source=value), sort_keys=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists() and path.read_text() == data:
         return
@@ -151,43 +199,59 @@ def save_state(audio, path):
     os.replace(temporary.name, path)
 
 
+def legacy_gain(sink, monitor):
+    # The old mapping captured through two controls in series: carry over their
+    # product per channel, and a mute on either side.
+    return dict(volume=[min(a * b // 65536, 2**32 - 2) for a, b in zip(sink['volume'], monitor['volume'])],
+                mute=sink['mute'] or monitor['mute'])
+
+
+def validated(state):
+    return gain(dict(volume={str(i): {'value': value} for i, value in enumerate(state['volume'])}, mute=state['mute']))
+
+
 def restore_gain(audio, path):
     if not path.exists():
         return
     saved = json.loads(path.read_text())
-    for kind, name, key in (('sink', SINK, 'sink'), ('source', MONITOR, 'monitor')):
-        state = saved[key]
-        # Validate persisted values before using them as pactl arguments.
-        validated = gain(dict(volume={str(i): {'value': value} for i, value in enumerate(state['volume'])}, mute=state['mute']))
-        audio.run('pactl', 'set-' + kind + '-volume', name, *(str(value) for value in validated['volume']))
-        audio.run('pactl', 'set-' + kind + '-mute', name, '1' if validated['mute'] else '0')
+    # Validate persisted values before using them as pactl arguments.
+    state = validated(saved['source']) if 'source' in saved else legacy_gain(validated(saved['sink']), validated(saved['monitor']))
+    audio.run('pactl', 'set-source-volume', MAPPING, *(str(value) for value in state['volume']))
+    audio.run('pactl', 'set-source-mute', MAPPING, '1' if state['mute'] else '0')
 
 
-def sink_usable(sink):
-    ports = sink.get('ports') or []
-    if not ports:
-        return True
-    active = sink.get('active_port')
-    for port in ports:
-        if port.get('name') == active:
-            return port.get('availability') == 'available'
-    return False
+def owned(module, media_class=None):
+    argument = module.get('argument', '')
+    return (module.get('name') == 'module-null-sink' and 'sink_name=' + MAPPING + ' ' in argument + ' '
+            and OWNER + '=' in argument and (media_class is None or ('media.class=' + media_class) in argument))
 
 
-def session_priority(sink):
-    raw = (sink.get('properties') or {}).get('priority.session', 0)
+def retire_legacy(audio, state, dsp):
+    # An earlier version mapped into a null sink. Keep its gain and mute, then
+    # remove it: its sink could become the default output and its monitor fails
+    # untargeted captures. A selected one hands the default to the DSP, which
+    # the new mapping then takes over like any first mapping.
+    sinks = {obj['name']: obj for obj in audio.objects('sinks')}
+    if MAPPING not in sinks:
+        return
+    modules = [module for module in audio.modules() if owned(module) and 'media.class=Audio/Source/Virtual' not in module['argument']]
+    if len(modules) != 1:
+        raise RuntimeError(MAPPING + ' is a sink this service does not own; not replacing it')
+    sources = {obj['name']: obj for obj in audio.objects('sources')}
+    if LEGACY in sources:
+        write_state(state, legacy_gain(gain(sinks[MAPPING]), gain(sources[LEGACY])))
+    selected = audio.run('pactl', 'get-default-source') == LEGACY
+    audio.run('pactl', 'unload-module', modules[0]['index'])
+    if selected:
+        audio.run('pactl', 'set-default-source', dsp)
+
+
+def session_priority(obj):
+    raw = (obj.get('properties') or {}).get('priority.session', 0)
     try:
         return int(raw)
     except (TypeError, ValueError):
         return 0
-
-
-def rank_playback_sinks(sinks):
-    # Prefer an available active port, or a sink with no ports (DSP chains).
-    # Then WirePlumber's session priority, then name so the choice is stable.
-    candidates = [sink for sink in sinks if sink.get('name') and sink['name'] != SINK]
-    candidates.sort(key=lambda sink: (not sink_usable(sink), -session_priority(sink), sink['name']))
-    return [sink['name'] for sink in candidates]
 
 
 def port_usable(device):
@@ -197,14 +261,14 @@ def port_usable(device):
 
 
 def real_inputs(sources):
-    # A monitor only repeats a sink, and asahi-audio's raw array (RawMics) is
-    # uncalibrated: neither is a microphone the session should default to.
-    # WirePlumber ignores a default whose port is unplugged.
+    # A monitor only repeats a sink, asahi-audio's raw array (RawMics) is
+    # uncalibrated, and the mapping carries only the array: none of them can
+    # stand in for it. WirePlumber ignores a default whose port is unplugged.
     def monitor(source):
         return (source['name'].endswith('.monitor') or source.get('monitor_source')
                 or (source.get('properties') or {}).get('device.class') == 'monitor')
     candidates = [source for source in sources if source.get('name') and not monitor(source)
-                  and not source['name'].endswith('.RawMics') and port_usable(source)]
+                  and source['name'] != MAPPING and not source['name'].endswith('.RawMics') and port_usable(source)]
     candidates.sort(key=lambda source: (-session_priority(source), source['name']))
     return [source['name'] for source in candidates]
 
@@ -218,25 +282,25 @@ def claim(state):
     return path.read_text() if path.exists() else None
 
 
-def leave_mapping(audio, state, sources, original_input, original_output):
+def mapping_audible(sources):
+    return any(obj['name'] == MAPPING and audible(obj) for obj in sources)
+
+
+def leave_mapping(audio, state, sources, original_input):
     # The array's DSP is gone (#99: WirePlumber left its filter half-built), so
-    # the mapping carries silence. Its sink must not stay the default output,
-    # nor its monitor the default input. WirePlumber would fall back to another
-    # monitor, so hand capture to a plugged-in real input, and claim that
-    # choice so the mapping is selected again when the array returns. Choosing
-    # another real input ends the claim; losing the claimed one (unplugged)
-    # hands over again. A muted mapping is the user's mute: never hand it to
-    # an unmuted microphone.
+    # the mapping carries silence and must not stay the default input.
+    # WirePlumber would fall back to a monitor, so hand capture to a plugged-in
+    # real input, and claim that choice so the mapping is selected again when
+    # the array returns. Choosing another real input ends the claim; losing the
+    # claimed one (unplugged) hands over again. A muted mapping is the user's
+    # mute: never hand it to an unmuted microphone.
     claimed = claim(state)
     inputs = real_inputs(sources)
     if claimed and original_input != claimed and original_input in inputs:
         fallback_path(state).unlink()
         claimed = None
-    if original_output == SINK:
-        restore_output(audio, None)
-    if original_input == MONITOR:
-        eligible = all(any(obj['name'] == name and audible(obj) for obj in objects)
-                       for objects, name in ((audio.objects('sinks'), SINK), (sources, MONITOR)))
+    if original_input == MAPPING:
+        eligible = mapping_audible(sources)
     else:
         eligible = claimed is not None and original_input not in inputs
     if eligible and inputs and audio.run('pactl', 'get-default-source') == original_input:
@@ -258,39 +322,20 @@ def find_dsp(sources):
     return next((obj['name'] for obj in sources if DSP.fullmatch(obj['name'])), None)
 
 
-def restore_output(audio, previous):
-    # The mapping sink is a stereo capture target, not a speaker. WirePlumber
-    # still promotes a newly loaded null sink (and will persist that choice
-    # across sessions). Always move default playback off it.
-    if audio.run('pactl', 'get-default-sink') != SINK:
-        return
-    sinks = audio.objects('sinks')
-    names = {obj['name'] for obj in sinks if obj.get('name')}
-    candidates = []
-    if previous and previous != SINK:
-        candidates.append(previous)
-    candidates.extend(name for name in rank_playback_sinks(sinks) if name not in candidates)
-    for name in candidates:
-        if name not in names:
-            continue
-        if audio.run('pactl', 'get-default-sink') != SINK:
-            return
-        audio.run('pactl', 'set-default-sink', name)
-        return
-
-
 def reconcile(audio, state, save_only=False, checked=None):
     if save_only:
         save_state(audio, state)
         return
     sources = audio.objects('sources')
-    original_input = audio.run('pactl', 'get-default-source')
-    original_output = audio.run('pactl', 'get-default-sink')
     dsp = find_dsp(sources)
+    if dsp:
+        retire_legacy(audio, state, dsp)
+        sources = audio.objects('sources')
+    original_input = audio.run('pactl', 'get-default-source')
     if not dsp:
-        mapped = any(obj['name'] == MONITOR for obj in sources)
-        if mapped or original_output == SINK or claim(state):
-            leave_mapping(audio, state, sources, original_input, original_output)
+        mapped = any(obj['name'] == MAPPING for obj in sources)
+        if mapped or claim(state):
+            leave_mapping(audio, state, sources, original_input)
         if mapped:
             # A card or audio restart rebuilds the array within seconds; only a
             # lasting loss is worth telling the user about, once.
@@ -311,20 +356,22 @@ def reconcile(audio, state, save_only=False, checked=None):
     # claimed fallback that went away (default fell to a monitor) returns too.
     muted_claim = claimed == original_input and any(obj['name'] == original_input and obj.get('mute') is not False for obj in sources)
     returning = claimed is not None and not muted_claim and (claimed == original_input or original_input not in real_inputs(sources))
-    sinks = audio.objects('sinks')
     owner = uuid.uuid4().hex
     module = None
     changed_input = False
     problem = None
     def restore_input():
-        if original_input and audio.run('pactl', 'get-default-source') == MONITOR:
+        if original_input and audio.run('pactl', 'get-default-source') == MAPPING:
             if original_input in {obj['name'] for obj in audio.objects('sources')}:
-                if audio.run('pactl', 'get-default-source') == MONITOR:
+                if audio.run('pactl', 'get-default-source') == MAPPING:
                     audio.run('pactl', 'set-default-source', original_input)
     try:
-        if not any(obj['name'] == SINK for obj in sinks):
-            module = audio.run('pactl', 'load-module', 'module-null-sink', 'sink_name=' + SINK,
-                               'channels=2', 'channel_map=front-left,front-right',
+        if any(obj['name'] == MAPPING for obj in sources):
+            if not any(owned(module, 'Audio/Source/Virtual') for module in audio.modules()):
+                raise RuntimeError(MAPPING + ' is a source this service does not own; not mapping into it')
+        else:
+            module = audio.run('pactl', 'load-module', 'module-null-sink', 'media.class=Audio/Source/Virtual',
+                               'sink_name=' + MAPPING, 'channels=2', 'channel_map=front-left,front-right',
                                'sink_properties=device.description=AsahiMicrophone node.virtual=true priority.session=1 ' + OWNER + '=' + owner)
             if not module.isdecimal():
                 raise RuntimeError('PulseAudio did not return a module identity')
@@ -332,15 +379,14 @@ def reconcile(audio, state, save_only=False, checked=None):
             # audio restart; it has not been sampled yet.
             if checked is not None:
                 checked.clear()
-            # Some policy managers auto-select a newly created monitor. Undo
-            # only that owned temporary choice before waiting for its links.
+            # Some policy managers auto-select a new source. Undo only that
+            # owned temporary choice before waiting for its links.
             restore_input()
         for attempt in range(30):
             graph = audio.graph()
             output = port(graph, dsp, 'capture_AUX0')
-            inputs = [port(graph, SINK, 'playback_' + channel) for channel in ('FL', 'FR')]
-            monitor_exists = any(obj['name'] == MONITOR for obj in audio.objects('sources'))
-            if output is not None and all(value is not None for value in inputs) and monitor_exists:
+            inputs = [port(graph, MAPPING, 'input_' + channel) for channel in ('FL', 'FR')]
+            if output is not None and all(value is not None for value in inputs):
                 break
             audio.pause()
         else:
@@ -349,7 +395,7 @@ def reconcile(audio, state, save_only=False, checked=None):
             restore_gain(audio, state)
         def validate_endpoints(graph):
             if port(graph, dsp, 'capture_AUX0') != output or [
-                port(graph, SINK, 'playback_' + channel) for channel in ('FL', 'FR')
+                port(graph, MAPPING, 'input_' + channel) for channel in ('FL', 'FR')
             ] != inputs:
                 raise RuntimeError('Asahi microphone endpoints changed during mapping')
         for input_ in inputs:
@@ -366,25 +412,26 @@ def reconcile(audio, state, save_only=False, checked=None):
             audio.pause()
         else:
             raise RuntimeError('Asahi microphone stereo links did not become ready')
-        restore_output(audio, original_output)
         current_input = audio.run('pactl', 'get-default-source')
-        select_monitor = (original_input in ('', dsp) or returning) and current_input == original_input
-        # Only a monitor that carries the microphone may be the default input: a
-        # linked one can still carry digital silence (#505). A muted mapping is
-        # the user's microphone mute (the mute key mutes the sink side while the
-        # monitor is the default), even one muted while it is sampled: it is
-        # never sampled or swapped for the unmuted DSP, and stays selectable.
-        # A default mapping is sampled once, not on every event.
-        def mapping_audible():
-            return all(any(obj['name'] == name and audible(obj) for obj in audio.objects(kind))
-                       for kind, name in (('sinks', SINK), ('sources', MONITOR)))
         key = (output, *inputs)
+        # A mapping the default route was seen to bypass is not selected again,
+        # or the default would flip between it and the DSP on every event.
+        misrouted = ('misroute',) + key in (checked or ())
+        select_mapping = (original_input in ('', dsp) or returning) and current_input == original_input and not misrouted
+        # Only a mapping that carries the microphone may be the default input: a
+        # linked one can still carry digital silence (#505). A muted mapping is
+        # the user's microphone mute (the mute key mutes the default source),
+        # even one muted while it is sampled: it is never sampled or swapped
+        # for the unmuted DSP, and stays selectable. A default mapping is
+        # sampled once, not on every event.
+        def audible_now():
+            return mapping_audible(audio.objects('sources'))
         sampled = True
-        if (select_monitor or (current_input == MONITOR and key not in (checked or ()))) and mapping_audible():
-            sampled = audio.signal(MONITOR)
+        if (select_mapping or (current_input == MAPPING and key not in (checked or ()))) and audible_now():
+            sampled = audio.signal(MAPPING)
             if sampled is True and checked is not None:
                 checked.add(key)
-            elif sampled is not True and not mapping_audible():
+            elif sampled is not True and not audible_now():
                 sampled = True
         graph = audio.graph()
         validate_endpoints(graph)
@@ -393,21 +440,32 @@ def reconcile(audio, state, save_only=False, checked=None):
         # Read the user's choice after the final graph query so a device change
         # during that query is not overwritten. Pulse has no atomic compare/set.
         if audio.run('pactl', 'get-default-source') == current_input:
-            if select_monitor and sampled:
+            if select_mapping and sampled:
                 changed_input = True
-                audio.run('pactl', 'set-default-source', MONITOR)
-            elif current_input == MONITOR and sampled is False and mapping_audible():
+                audio.run('pactl', 'set-default-source', MAPPING)
+            elif current_input == MAPPING and sampled is False and audible_now():
                 audio.run('pactl', 'set-default-source', dsp)
         # Keep the claim only while the fallback is still the default and the
         # returning mapping could not be confirmed live yet.
-        if not muted_claim and not (select_monitor and returning and sampled is not True):
+        if not muted_claim and not (select_mapping and returning and sampled is not True):
             fallback.unlink(missing_ok=True)
         if sampled is None:
             problem = 'Could not sample the Asahi microphone stereo mapping; the default input is unchanged'
         elif sampled is False:
             problem = 'Asahi microphone stereo mapping carries no signal; it is not the default input'
-        # Existing DSP, monitor and sink gain/mute are never reset. Save only
-        # the owned mapping so a new module after daemon restart can recover it.
+        elif changed_input or (current_input == MAPPING and ('route',) + key not in (checked or ())):
+            # The explicit sample above cannot show where apps that name no
+            # device are linked (#99). Check that route once per mapping.
+            feeds = audio.route()
+            if feeds is not None and checked is not None:
+                checked.add(('route',) + key)
+            if feeds is not None and feeds != {MAPPING} and audio.run('pactl', 'get-default-source') == MAPPING:
+                if checked is not None:
+                    checked.add(('misroute',) + key)
+                audio.run('pactl', 'set-default-source', dsp)
+                problem = 'Apps recording from the default input reach ' + ', '.join(sorted(map(str, feeds))) + ', not the Asahi microphone mapping; the default input is the DSP'
+        # Existing DSP gain/mute is never reset. Save only the owned mapping so
+        # a new module after a daemon restart can recover it.
         save_state(audio, state)
     except Exception:
         def cleanup(action):
@@ -429,7 +487,7 @@ def reconcile(audio, state, save_only=False, checked=None):
                         audio.run('pactl', 'unload-module', module)
         # A dead PipeWire graph must not prevent removing a module still owned
         # by PulseAudio, or restoring a default that this invocation changed.
-        for action in (restore_changed_input, lambda: restore_output(audio, original_output), remove_links, remove_module):
+        for action in (restore_changed_input, remove_links, remove_module):
             cleanup(action)
         raise
     if problem:
