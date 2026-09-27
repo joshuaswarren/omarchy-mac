@@ -273,6 +273,13 @@ with tempfile.TemporaryDirectory() as temporary:
     with mock.patch.object(m.time, 'monotonic', return_value=later):
         audio.no_dsp = True; deferred(audio, saved)
     assert not audio.notices
+    # An audio restart during a loss drops the mapping: no pending notice, so
+    # the watcher does not wake early while the array stays missing.
+    audio = lost(); saved = state(); deferred(audio, saved)
+    assert m.outage_due() is not None
+    audio.existing = False; audio.linked = {}; audio.module = None
+    deferred(audio, saved)
+    assert m.outage_due() is None and not audio.notices
     # Without a mapping, a persisted mapping sink still leaves playback.
     audio = lost(); audio.existing = False; audio.linked = {}; audio.output = m.SINK
     deferred(audio, state())
