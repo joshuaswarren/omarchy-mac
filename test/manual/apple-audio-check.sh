@@ -69,8 +69,10 @@ sys.exit(not alsa or any(int(p.get('session.suspend-timeout-seconds', 5)) != 0 f
 "
 }
 
-source_has_signal() {
-  timeout 3 parec --device="$1" --raw --format=s16le --channels=2 --rate=48000 | python3 -c "
+# No --device: apps that name no device follow WirePlumber's default route,
+# which can differ from the default source's own capture (#99).
+default_route_has_signal() {
+  timeout 3 parec --raw --format=s16le --channels=2 --rate=48000 | python3 -c "
 import array, sys
 samples = array.array('h', sys.stdin.buffer.read())
 peak = max(map(abs, samples)) if samples else 0
@@ -93,7 +95,7 @@ source=$(pactl get-default-source)
 echo "default source: $source"
 journalctl --user -b -u omarchy-asahi-mic.service --no-pager | tail -n 5
 (( sound )) || exit $status
-check "default source carries microphone signal" source_has_signal "$source"
+check "default input carries microphone signal as apps record it" default_route_has_signal
 echo "Playing a 2 s tone on the default sink ($(pactl get-default-sink))"
 python3 -c "
 import math, struct, sys
