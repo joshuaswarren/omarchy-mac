@@ -26,9 +26,10 @@ class Fake(w.System):
         self.runtime = Path(tempfile.mkdtemp(dir=temporary.name))
         self.ticks = 100
         self.mono = 1000.0; self.boot = 5000.0
-        self.active = True; self.units = True; self.healthy = True; self.locked = False
+        self.active = True; self.unit_state = 'active'; self.healthy = True; self.locked = False
         self.wp = 50; self.wp_start = 10.0; self.wp_cpu = 0.0; self.wp_load = 0.0
-        self.shell_running = True; self.shell_result = True; self.restart_result = True; self.heals = True
+        self.shell_running = True; self.shell_stops = True; self.shell_result = True; self.restart_result = True; self.heals = True
+        self.shell_starts = 0; self.locks = 0
         self.probes = 0; self.stack_restarts = 0; self.wp_restarts = 0
         self.notices = []; self.order = []
     def boottime(self): return self.boot
@@ -36,8 +37,9 @@ class Fake(w.System):
     def sleep(self, seconds):
         self.mono += seconds; self.boot += seconds; self.wp_cpu += self.wp_load * seconds
     def session_active(self): return self.active
-    def units_active(self): return self.units
-    def unlocked(self): return not self.locked
+    def units(self): return self.unit_state
+    def lock_state(self): return 'the screen is locked' if self.locked else None
+    def lock_screen(self): self.locks += 1
     def main_pid(self, unit): return self.wp if unit == 'wireplumber.service' else None
     def stat(self, pid): return (self.wp_cpu, self.wp_start) if pid == self.wp else None
     def probe(self):
@@ -45,14 +47,17 @@ class Fake(w.System):
         return self.healthy
     def stop_shell(self):
         self.order.append('stop shell')
-        running, self.shell_running = self.shell_running, False
-        return running
+        if not self.shell_running: return 'none'
+        if not self.shell_stops: return 'failed'
+        self.shell_running = False
+        return 'stopped'
     def start_shell(self):
-        self.order.append('start shell'); self.shell_running = True
+        self.order.append('start shell'); self.shell_starts += 1
+        if self.shell_result: self.shell_running = True
         return self.shell_result
     def restart_stack(self):
         self.order.append('restart stack'); self.stack_restarts += 1
-        if self.heals: self.healthy = True
+        if self.heals: self.healthy = True; self.unit_state = 'active'
         return self.restart_result
     def restart_wireplumber(self):
         self.order.append('restart wireplumber'); self.wp_restarts += 1
@@ -104,6 +109,16 @@ run(watch, 40)
 assert fake.stack_restarts == 1 and fake.notices == [('Audio restarted', ())]
 fake = Fake(); fake.shell_running = False
 assert w.repair(fake, 'stack', 'test') == 0 and fake.order == ['stop shell', 'restart stack'], 'no shell is started that was not running'
+fake = Fake(); fake.shell_stops = False
+assert w.repair(fake, 'stack', 'test') == w.DEFERRED and fake.stack_restarts == 0, 'audio never restarts under a shell that would not stop'
+assert fake.order == ['stop shell', 'start shell'] and not (fake.runtime / 'omarchy-audio-repairs').exists()
+fake = Fake(); fake.shell_result = False
+assert w.repair(fake, 'stack', 'test') == 0 and fake.shell_starts == w.SHELL_STARTS, 'a shell that does not come back is tried again'
+fake = Fake()
+fake.start_shell = lambda: (setattr(fake, 'boot', fake.boot + 600), True)[1]
+assert w.repair(fake, 'stack', 'test') == 0 and fake.locks == 1, 'a suspend while the shell was down locks the screen after'
+fake = Fake()
+assert w.repair(fake, 'stack', 'test') == 0 and fake.locks == 0
 fake = Fake(); hang(fake); fake.mono_before = fake.mono
 assert w.repair(fake, 'stack', 'test') == 1 and fake.order[-1] == 'start shell', 'a server that never answers again fails, and the shell still returns'
 assert fake.mono - fake.mono_before >= w.RECOVERY
@@ -157,11 +172,18 @@ assert fake.stack_restarts == 0, 'a session that ends mid-check is not repaired'
 print('ok - nothing restarts during or after a logout')
 
 # Audio the user stopped (or a unit systemd is still starting) is not probed:
-# a probe would socket-activate it.
-fake = Fake(); fake.units = False; watch = w.Watch(fake)
+# a probe would socket-activate it. A unit that gave up (a crash loop hit its
+# start limit) is a failure like a hang.
+fake = Fake(); fake.unit_state = 'other'; watch = w.Watch(fake)
 run(watch, 300)
 assert fake.probes == 0 and fake.stack_restarts == 0
-print('ok - stopped or starting audio units are left to the user and systemd')
+assert w.repair(fake, 'stack', 'test') == w.DEFERRED and fake.stack_restarts == 0, 'an automatic repair leaves stopped audio alone'
+assert w.repair(fake, 'stack', 'clicked', manual=True) == 0, 'the user may start it'
+fake = Fake(); watch = w.Watch(fake); run(watch, 60)
+fake.unit_state = 'failed'; before = fake.probes
+run(watch, 20)
+assert fake.stack_restarts == 1 and fake.probes > before and fake.notices == [('Audio restarted', ())], (fake.stack_restarts, fake.notices)
+print('ok - stopped or starting audio is left alone, a failed unit is restarted')
 
 # Suspend stops CLOCK_MONOTONIC but not CLOCK_BOOTTIME: a failure seen before
 # a suspend is forgotten, and the stack settles again after the resume.
@@ -175,10 +197,12 @@ print('ok - a suspend in between forgets old failures')
 
 # WirePlumber busy for a while only brings the next probe forward; its DSP
 # threads may legitimately be busy. A wedged one fails the probes too.
-fake = Fake(); watch = w.Watch(fake); run(watch, 60)
-before = fake.probes; fake.wp_load = 1.0
+fake = Fake(); watch = w.Watch(fake); run(watch, 40)
+watch.next_probe = fake.mono + 10000; before = fake.probes; fake.wp_load = 1.0
+run(watch, 10)
+assert fake.probes == before, 'a moment of CPU is nothing'
 run(watch, 30)
-assert fake.probes > before and fake.stack_restarts == 0, 'a busy but answering WirePlumber is left alone'
+assert fake.probes == before + 1 and fake.stack_restarts == 0, 'a busy but answering WirePlumber is probed early and left alone'
 fake.healthy = False
 run(watch, 20)
 assert fake.stack_restarts == 1
@@ -222,21 +246,39 @@ cpu, start = system.stat(os.getpid())
 assert cpu >= 0 and 0 < start
 assert system.stat(2**31) is None
 with mock.patch.object(w.System, 'run', return_value=None):
-    assert not system.unlocked() and not system.probe() and not system.stop_shell() and not system.start_shell()
+    assert system.lock_state() == 'the lock state is unknown' and not system.probe() and not system.start_shell()
+    assert system.units() == 'other'
 def answers(locked, status):
     def run(self, *args, timeout=10, env=None):
         if args[0] == 'omarchy-hyprland-session-locked': return subprocess.CompletedProcess(args, locked, '', '')
         return None if status is None else subprocess.CompletedProcess(args, 0, status, '')
     return run
-for locked, status, unlocked in ((1, '{"secure":false,"requested":false}', True), (0, '{"secure":false,"requested":false}', False),
-                                 (2, '{"secure":false,"requested":false}', False), (1, '{"secure":false,"requested":true}', False),
-                                 (1, '{"secure":true,"requested":false}', False), (1, None, False), (1, 'garbage', False)):
+free = '{"secure":false,"requested":false}'
+for locked, status, expected in ((1, free, None), (0, free, 'the screen is locked'), (2, free, 'the lock state is unknown'),
+                                 (1, '{"secure":false,"requested":true}', 'the screen is locked'),
+                                 (1, '{"secure":true,"requested":false}', 'the screen is locked'),
+                                 (1, None, None), (1, 'garbage', 'the lock state is unknown')):
     with mock.patch.object(w.System, 'run', answers(locked, status)):
-        assert system.unlocked() is unlocked, (locked, status)
-kills = iter([0, 0, 1])
-with mock.patch.object(w.System, 'run', side_effect=lambda *args, **kw: subprocess.CompletedProcess(args, next(kills), '', '')) as call:
-    assert system.stop_shell() and call.call_count == 3, 'every running instance is stopped'
-    assert call.call_args.args[:4] == ('quickshell', 'kill', '-p', system.shell)
+        assert system.lock_state() == expected, (locked, status)
+with mock.patch.dict(os.environ, {'OMARCHY_PATH': '/usr/share/omarchy'}):
+    for listings, result, kills in ((['[]'], 'none', 0), (['[{}]', '[{}, {}]', '[{}]', '[]'], 'stopped', 3),
+                                    (['[{}]'] * 11, 'failed', 10), ([None], 'failed', 10)):
+        replies = iter(listings)
+        calls = []
+        def run(self, *args, timeout=10, env=None):
+            calls.append(args)
+            if args[1] == 'list':
+                listing = next(replies, listings[-1])
+                return None if listing is None else subprocess.CompletedProcess(args, 0, listing, '')
+            return subprocess.CompletedProcess(args, 0, '', '')
+        with mock.patch.object(w.System, 'run', run):
+            assert system.stop_shell() == result, (listings, result)
+        assert sum(call[1] == 'kill' for call in calls) == kills, (listings, calls)
+        assert all(call[2:4] == ('-p', '/usr/share/omarchy/shell') for call in calls)
+for states, expected in (('active\nactive\nactive', 'active'), ('active\nfailed\nactive', 'failed'),
+                         ('active\ninactive\nactive', 'other'), ('failed\nactivating\nactive', 'other')):
+    with mock.patch.object(w.System, 'run', return_value=subprocess.CompletedProcess([], 3, states, '')):
+        assert system.units() == expected, states
 with mock.patch.object(w.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '', '')) as call, \
         mock.patch.dict(os.environ, {'PULSE_SERVER': 'tcp:remote', 'XDG_RUNTIME_DIR': '/run/user/1000'}):
     assert w.System().probe()
@@ -247,8 +289,6 @@ with mock.patch.dict(os.environ, {'XDG_SESSION_ID': ''}):
 with mock.patch.dict(os.environ, {'XDG_SESSION_ID': '7'}), \
         mock.patch.object(w.System, 'output', side_effect=['yes\nactive', 'no\nclosing', None]):
     assert system.session_active() and not system.session_active() and not system.session_active()
-with mock.patch.object(w.System, 'output', side_effect=['active\nactive\nactive', 'active\ninactive\nactive']):
-    assert system.units_active() and not system.units_active()
 print('ok - system seams read /proc, logind and the lock state safely')
 
 unit = (root / 'vendor/systemd/user/omarchy-audio-watchdog.service').read_text()

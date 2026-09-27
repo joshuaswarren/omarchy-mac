@@ -23,9 +23,9 @@ import time
 # --repair, so both share one lock and one restart budget.
 #
 # Quickshell 0.3.1 crashes when PipeWire or WirePlumber goes away under it, and
-# its crash handler brings the shell back without the lock screen and with a
-# crash report window. So a restart happens only while the screen is unlocked,
-# with the shell stopped first and started again once audio answers.
+# its crash handler brings the shell back with a crash report window and the
+# screen locked. So a restart happens only while the screen is unlocked, with
+# the shell stopped first and started again once audio answers.
 SERVICES = ('pipewire.service', 'pipewire-pulse.service', 'wireplumber.service')
 TICK = 10.0
 PROBE_INTERVAL = 30.0
@@ -39,6 +39,7 @@ STACK_GAP = 120.0
 STACK_LIMIT = (3, 1800.0)
 WIREPLUMBER_LIMIT = (3, 3600.0)
 HEALTHY_PROBES = 2
+SHELL_STARTS = 3
 # --repair exit codes besides 0 (restarted) and 1 (the restart failed).
 DEFERRED = 75
 EXHAUSTED = 76
@@ -57,7 +58,6 @@ class System:
     def __init__(self):
         self.runtime = Path(os.environ.get('XDG_RUNTIME_DIR', '/run/user/' + str(os.getuid())))
         self.ticks = os.sysconf('SC_CLK_TCK')
-        self.shell = os.environ.get('OMARCHY_PATH', '/usr/share/omarchy') + '/shell'
 
     def boottime(self):
         return time.clock_gettime(time.CLOCK_BOOTTIME)
@@ -89,11 +89,18 @@ class System:
         state = self.output('loginctl', 'show-session', session, '-p', 'Active', '-p', 'State', '--value')
         return state is not None and state.split() == ['yes', 'active']
 
-    def units_active(self):
-        # A stopped, failed, masked or (re)starting unit is someone's choice or
-        # systemd's job; probing would even socket-activate a stopped server.
-        states = self.output('systemctl', '--user', 'is-active', *SERVICES)
-        return states is not None and states.split() == ['active'] * len(SERVICES)
+    def units(self):
+        # 'active' all running; 'failed' one gave up (a crash loop hit its
+        # start limit); 'other' stopped, masked or (re)starting, which is the
+        # user's choice or systemd's job. Probing would even socket-activate a
+        # stopped server.
+        result = self.run('systemctl', '--user', 'is-active', *SERVICES)
+        states = result.stdout.split() if result is not None else []
+        if states == ['active'] * len(SERVICES):
+            return 'active'
+        if 'failed' in states and all(state in ('active', 'failed') for state in states):
+            return 'failed'
+        return 'other'
 
     def main_pid(self, unit):
         pid = self.output('systemctl', '--user', 'show', '-p', 'MainPID', '--value', unit)
@@ -114,32 +121,53 @@ class System:
                           env=dict(PULSE_SERVER='unix:' + str(self.runtime / 'pulse/native')))
         return result is not None and result.returncode == 0
 
-    def unlocked(self):
+    def lock_state(self):
+        # None when the shell may be stopped, else why not.
         # omarchy-hyprland-session-locked: 0 locked, 1 unlocked, 2 unknown.
-        # Only a certain answer, with no lock being taken, counts.
         result = self.run('omarchy-hyprland-session-locked')
-        if result is None or result.returncode != 1:
-            return False
+        if result is None or result.returncode not in (0, 1):
+            return 'the lock state is unknown'
+        if result.returncode == 0:
+            return 'the screen is locked'
         status = self.output('omarchy-shell', 'lock', 'status', timeout=3)
+        if status is None:
+            # The compositor holds no lock and no shell answers to take one:
+            # the shell is gone or hung, and there is no locker to lose.
+            return None
         try:
-            lock = json.loads(status or '')
+            lock = json.loads(status)
         except ValueError:
-            return False
-        return isinstance(lock, dict) and not lock.get('secure') and not lock.get('requested')
+            return 'the lock state is unknown'
+        if not isinstance(lock, dict) or lock.get('secure') or lock.get('requested'):
+            return 'the screen is locked'
+        return None
+
+    def shell_instances(self):
+        # Running Omarchy shell instances, or None if Quickshell cannot tell.
+        output = self.output('quickshell', 'list', '-p', os.environ['OMARCHY_PATH'] + '/shell', '--any-display', '-j', timeout=5)
+        try:
+            instances = json.loads(output) if output is not None else None
+        except ValueError:
+            return None
+        return len(instances) if isinstance(instances, list) else None
 
     def stop_shell(self):
-        # True when a shell was running and is now stopped.
-        stopped = False
-        for _ in range(5):
-            result = self.run('quickshell', 'kill', '-p', self.shell, '--any-display', timeout=5)
-            if result is None or result.returncode != 0:
-                break
-            stopped = True
-        return stopped
+        # 'none' no shell ran, 'stopped', or 'failed' (one is still there).
+        count = self.shell_instances()
+        if count == 0:
+            return 'none'
+        for _ in range(10):
+            self.run('quickshell', 'kill', '-p', os.environ['OMARCHY_PATH'] + '/shell', '--any-display', timeout=5)
+            if self.shell_instances() == 0:
+                return 'stopped'
+        return 'failed'
 
     def start_shell(self):
         result = self.run('omarchy-restart-shell', timeout=60)
         return result is not None and result.returncode == 0
+
+    def lock_screen(self):
+        self.run('omarchy-shell', 'lock', 'lock', timeout=10)
 
     def restart_stack(self):
         # A wedged WirePlumber ignores SIGTERM until systemd's 90 s stop
@@ -151,6 +179,7 @@ class System:
 
     def restart_wireplumber(self):
         self.run('systemctl', '--user', 'kill', '--signal=SIGKILL', 'wireplumber.service')
+        self.run('systemctl', '--user', 'reset-failed', 'wireplumber.service')
         result = self.run('systemctl', '--user', 'restart', 'wireplumber.service', timeout=30)
         return result is not None and result.returncode == 0
 
@@ -219,7 +248,8 @@ def allowed(system, kind, now):
 
 
 def recover(system, kind):
-    # Restart, then give the rebuilt graph a moment to answer.
+    # Restart, then give the rebuilt graph a moment to answer (each probe can
+    # itself take PROBE_TIMEOUT).
     if not (system.restart_stack() if kind == 'stack' else system.restart_wireplumber()):
         return False
     deadline = system.monotonic() + RECOVERY
@@ -230,9 +260,22 @@ def recover(system, kind):
     return True
 
 
+def bring_back_shell(system, suspended_from):
+    for _ in range(SHELL_STARTS):
+        if system.start_shell():
+            break
+        system.sleep(2.0)
+    else:
+        say('The shell did not come back after the audio restart')
+    # Without a shell nothing could lock the screen for a suspend in between.
+    if system.boottime() - system.monotonic() - suspended_from > RESUME_JUMP:
+        system.lock_screen()
+
+
 def repair(system, kind, reason, manual=False):
     # 0 restarted, 1 the restart failed, DEFERRED or EXHAUSTED not restarted.
-    # A manual repair (the user clicked a notice) skips the budget only.
+    # A manual repair (the user clicked a notice) skips the budget and the
+    # unit states only.
     with repair_lock(system) as held:
         if not held:
             say('Not restarting audio: another audio repair is running')
@@ -241,22 +284,31 @@ def repair(system, kind, reason, manual=False):
         if not system.session_active():
             say('Not restarting audio: the login session is not active')
             return DEFERRED
-        if not system.unlocked():
-            say('Not restarting audio: the screen is locked')
+        if not manual and system.units() == 'other':
+            say('Not restarting audio: it is stopped or starting')
+            return DEFERRED
+        why = system.lock_state()
+        if why:
+            say('Not restarting audio: ' + why)
             return DEFERRED
         now = system.boottime()
         why, code = allowed(system, kind, now)
         if why and not manual:
             say('Not restarting audio: ' + why)
             return code
+        suspended_from = system.boottime() - system.monotonic()
+        shell = system.stop_shell()
+        if shell == 'failed':
+            say('Not restarting audio: the shell could not be stopped')
+            bring_back_shell(system, suspended_from)
+            return DEFERRED
         record(system, kind, now)
         say(('Restarting the audio stack: ' if kind == 'stack' else 'Restarting WirePlumber: ') + reason)
-        shell = system.stop_shell()
         try:
             done = recover(system, kind)
         finally:
-            if shell and not system.start_shell():
-                say('The shell did not come back after the audio restart')
+            if shell == 'stopped':
+                bring_back_shell(system, suspended_from)
     return 0 if done else 1
 
 
@@ -309,24 +361,31 @@ class Watch:
         system = self.system
         if self.resumed():
             self.reset(settle=True)
-        if not system.session_active() or not system.units_active():
+        if not system.session_active():
+            say('Waiting: the login session is not active')
+            self.reset(settle=True)
+            return
+        units = system.units()
+        if units == 'other':
             self.reset(settle=True)
             return
         now = system.monotonic()
         if now < self.settle_until:
             self.wireplumber_busy(now)
             return
-        # A busy WirePlumber is only a reason to look sooner, never to restart:
-        # its DSP threads legitimately use CPU.
-        if not (now >= self.next_probe or self.wireplumber_busy(now)):
-            return
-        if system.probe():
-            self.failures = 0
-            self.healthy += 1
-            if self.healthy >= HEALTHY_PROBES:
-                self.stuck = False
-            self.next_probe = now + PROBE_INTERVAL
-            return
+        if units == 'active':
+            # A busy WirePlumber is only a reason to look sooner, never to
+            # restart: its DSP threads legitimately use CPU.
+            if not (now >= self.next_probe or self.wireplumber_busy(now)):
+                return
+            if system.probe():
+                self.failures = 0
+                self.busy = None
+                self.healthy += 1
+                if self.healthy >= HEALTHY_PROBES:
+                    self.stuck = False
+                self.next_probe = now + PROBE_INTERVAL
+                return
         self.healthy = 0
         self.failures += 1
         self.next_probe = now + TICK
@@ -334,7 +393,7 @@ class Watch:
         # server (or their own restart) resets that.
         if self.failures < 2 or self.stuck:
             return
-        result = repair(system, 'stack', 'the audio server stopped responding')
+        result = repair(system, 'stack', 'the audio server stopped responding' if units == 'active' else 'an audio service keeps failing')
         if result == 0:
             system.notify('Audio restarted', 'Sound stopped responding and was restarted')
             self.reset(settle=True)

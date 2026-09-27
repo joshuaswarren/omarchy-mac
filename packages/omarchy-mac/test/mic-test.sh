@@ -37,7 +37,7 @@ class Audio:
         self.notices = []; self.feeds = {m.MAPPING}; self.routes = 0; self.route_choice = None
         self.stamp = None; self.restarts = 0; self.link_error = 'link rejected after partial creation'
         self.cards = [dict(name='alsa_card.platform-sound', active_profile='HiFi')]
-    def restart_session_manager(self, reason): self.restarts += 1; return True
+    def restart_session_manager(self, reason): self.restarts += 1; return 0
     def objects(self, kind):
         if self.fail_query: raise RuntimeError('live Pulse query failed')
         if kind == 'sources':
@@ -546,6 +546,15 @@ with tempfile.TemporaryDirectory() as temporary:
     assert result is False, 'another source changing is not the mapping'
     sub = feed("echo \"Event 'change' on source #5\"; echo \"Event 'new' on sink #1\"; sleep 3"); result = sub.wait(); sub.stop()
     assert result is False, 'a device event with it is a full repair'
+    # Save-only wakes never push the backstop out: a microphone in constant
+    # use still gets its full repair pass on time.
+    sub = feed("while true; do echo \"Event 'change' on source #5\"; sleep 0.15; done")
+    results = []; start = time.monotonic()
+    while time.monotonic() - start < 1.5:
+        results.append(sub.wait())
+        if results[-1] is False: break
+    sub.stop()
+    assert results[-1] is False and True in results[:-1] and time.monotonic() - start < 1.2, results
     m.mapping_index['value'] = None
     saves = []
     def saving(save=False):
@@ -644,20 +653,41 @@ with tempfile.TemporaryDirectory() as temporary:
     except RuntimeError as error: assert 'Operation not permitted' in str(error), error
     else: raise AssertionError('a refused link must fail the mapping')
     assert m.recheck['at'] is None, 'no re-check follows a restart that did not happen'
-# The watchdog owns the restart: the mapper asks it, and a restart it declines
-# (a logout, its budget, another repair) is no restart.
+# The watchdog owns the restart: the mapper asks it, in a unit of its own so
+# the shell is never left stopped by a mapper that stops waiting. A restart
+# it defers (a logout, the lock screen, another repair) costs no attempt and
+# is asked for again half a minute later; one it refuses or fails does.
 with tempfile.TemporaryDirectory() as temporary:
     class Declined(Audio):
-        def restart_session_manager(self, reason): self.restarts += 1; return False
-    audio = Declined(); audio.stamp = Path(temporary) / 'stamp'; audio.fail_link = 21
+        code = 75
+        def restart_session_manager(self, reason): self.restarts += 1; return self.code
+    stamp = Path(temporary) / 'stamp'
+    audio = Declined(); audio.stamp = stamp; audio.fail_link = 21
     audio.link_error = 'pw-link -L: failed to link ports: Operation not permitted'
     try: m.reconcile(audio, Path(temporary) / 'state.json')
     except RuntimeError: pass
-    assert audio.restarts == 1 and m.recheck['at'] is None, 'a declined restart schedules no re-check'
-for code, restarted in ((0, True), (75, False), (76, False), (1, False)):
-    with mock.patch.object(m.subprocess, 'run', return_value=subprocess.CompletedProcess([], code, '', 'why')) as call:
-        assert m.Audio().restart_session_manager('links refused') is restarted
-        assert call.call_args.args[0][:3] == ['omarchy-audio-watchdog', '--repair', 'wireplumber'], call.call_args
+    assert audio.restarts == 1 and m.recheck['at'] is None and not stamp.exists(), 'a deferred restart costs nothing'
+    audio.code = 76
+    try: m.reconcile(audio, Path(temporary) / 'state.json')
+    except RuntimeError: pass
+    assert audio.restarts == 2 and m.recheck['at'] is None and stamp.exists(), 'a refused restart waits out the interval'
+    m.outage.update(since=None, notified=False, repaired=False)
+    audio = Declined(); audio.stamp = Path(temporary) / 'outage'; audio.existing = True; audio.no_dsp = True
+    with mock.patch.object(m.time, 'monotonic', return_value=5000.0):
+        try: m.reconcile(audio, Path(temporary) / 'state.json')
+        except m.Deferred: pass
+    with mock.patch.object(m.time, 'monotonic', return_value=5000.0 + m.OUTAGE_GRACE):
+        try: m.reconcile(audio, Path(temporary) / 'state.json')
+        except m.Deferred: pass
+        assert audio.restarts == 1 and not audio.notices and not m.outage['notified'], 'a deferred repair is no reason to give up'
+        assert 29 <= m.outage_due() <= 30, m.outage_due()
+    m.outage.update(since=None, notified=False, repaired=False)
+for code in (0, 75, 76, 1):
+    with mock.patch.object(m.subprocess, 'run', return_value=subprocess.CompletedProcess([], code, b'', b'')) as call:
+        assert m.Audio().restart_session_manager('links refused') == code
+        args = call.call_args.args[0]
+        assert args[:3] == ['systemd-run', '--user', '--wait'] and '--unit=omarchy-audio-repair' in args, args
+        assert args[-5:] == ['omarchy-audio-watchdog', '--repair', 'wireplumber', '--reason', 'links refused'], args
 unit = (root / 'vendor/systemd/user/omarchy-asahi-mic.service').read_text()
 assert '--watch' in unit and 'PartOf=graphical-session.target' in unit
 assert 'PartOf=pipewire.service' not in unit and 'After=graphical-session.target' not in unit

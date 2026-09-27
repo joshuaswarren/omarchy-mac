@@ -31,6 +31,7 @@ DSP = re.compile(r'effect_output\.j[0-9]+-mic')
 MODEL = Path('/proc/device-tree/model')
 OUTAGE_GRACE = 10.0
 REPAIR_INTERVAL = 300.0
+DEFERRED = 75
 # Restarting audio stops and restarts the shell around it (a shell under a
 # vanishing PipeWire crashes): the watchdog does that, a plain restart not.
 RESTART_AUDIO = ('omarchy-audio-watchdog', '--repair', 'stack', '--manual')
@@ -51,13 +52,14 @@ class Audio:
 
     def restart_session_manager(self, reason):
         # The audio watchdog owns every automatic audio restart: it kills the
-        # wedged WirePlumber, and declines during a logout, while another
-        # repair runs, or once its budget is spent. True: it restarted.
-        result = subprocess.run(['omarchy-audio-watchdog', '--repair', 'wireplumber', '--reason', reason],
-                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=150)
-        if result.stderr.strip():
-            print(result.stderr.strip(), file=sys.stderr, flush=True)
-        return result.returncode == 0
+        # wedged WirePlumber around a stopped shell, and declines (DEFERRED)
+        # during a logout, under the lock screen or while another repair runs.
+        # It runs as its own unit, so a mapper that stops or gives up waiting
+        # never leaves the shell stopped. Returns its exit code.
+        return subprocess.run(['systemd-run', '--user', '--wait', '--quiet', '--collect', '--unit=omarchy-audio-repair',
+                               '--description=Restart WirePlumber for the microphone mapping',
+                               'omarchy-audio-watchdog', '--repair', 'wireplumber', '--reason', reason],
+                              stdin=subprocess.DEVNULL, capture_output=True, timeout=300).returncode
 
     def run(self, *args):
         # Errors are matched in English (pw-link's EPERM below).
@@ -346,23 +348,28 @@ def repair_graph(audio, reason):
     # failing; the watchdog adds its own budget and never restarts during a
     # logout. The stamp holds the boot-relative time of the last attempt,
     # shared by every mapper process.
+    # Returns True (restarted), False, or DEFERRED: not now (a logout, the
+    # lock screen, another repair), try again soon; that costs no attempt.
     if audio.stamp is not None:
         try:
             if 0 <= time.monotonic() - float(audio.stamp.read_text()) < REPAIR_INTERVAL:
                 return False
         except (OSError, ValueError):
             pass
+    try:
+        code = audio.restart_session_manager(reason)
+    except (OSError, subprocess.SubprocessError) as error:
+        print('Could not restart WirePlumber: ' + str(error), file=sys.stderr, flush=True)
+        code = 1
+    if code == DEFERRED:
+        return DEFERRED
+    if audio.stamp is not None:
         try:
             audio.stamp.parent.mkdir(parents=True, exist_ok=True)
             audio.stamp.write_text(repr(time.monotonic()))
         except OSError as error:
             print('Could not record the WirePlumber repair: ' + str(error), file=sys.stderr, flush=True)
-            return False
-    try:
-        if not audio.restart_session_manager(reason):
-            return False
-    except (OSError, subprocess.SubprocessError) as error:
-        print('Could not restart WirePlumber: ' + str(error), file=sys.stderr, flush=True)
+    if code != 0:
         return False
     recheck['at'] = time.monotonic() + 3.0
     return True
@@ -430,8 +437,12 @@ def reconcile(audio, state, save_only=False, checked=None):
             if outage['since'] is None:
                 outage['since'] = time.monotonic()
             elif not outage['notified'] and time.monotonic() - outage['since'] >= OUTAGE_GRACE:
-                if not outage['repaired'] and not card_disabled(audio) and repair_graph(audio, 'the Asahi DSP microphone is missing'):
+                repaired = not outage['repaired'] and not card_disabled(audio) and repair_graph(audio, 'the Asahi DSP microphone is missing')
+                if repaired is True:
                     outage.update(since=time.monotonic(), repaired=True)
+                elif repaired == DEFERRED:
+                    # Ask again in half a minute (after an unlock, say).
+                    outage['since'] = time.monotonic() - OUTAGE_GRACE + 30.0
                 else:
                     outage['notified'] = True
                     audio.notify('Built-in microphone unavailable', 'Click to restart audio', *RESTART_AUDIO)
@@ -632,6 +643,9 @@ class Subscription:
         self.quiet, self.settle, self.backstop, self.retry = quiet, settle, backstop, retry
         self.process = None
         self.buffer = b''
+        # Save-only wakes never reset the backstop, or a busy microphone
+        # would starve it.
+        self.last_full = time.monotonic()
 
     def start(self):
         try:
@@ -662,31 +676,34 @@ class Subscription:
         *complete, self.buffer = self.buffer.split(b'\n')
         return complete
 
+    def full(self):
+        self.last_full = time.monotonic()
+        return False
+
     def wait(self, limit=None):
         # True: only the mapping's gain or mute may have changed.
         if self.process is None and not self.start():
             time.sleep(self.retry)
-            return False
-        backstop = self.backstop if limit is None else min(self.backstop, limit)
+            return self.full()
         started = time.monotonic()
+        hard = self.last_full + self.backstop if limit is None else min(self.last_full + self.backstop, started + limit)
         due = None
         latest = None
         repair = False
         while True:
             now = time.monotonic()
-            deadline = started + backstop if due is None else min(due, latest)
-            if deadline <= now:
-                return due is not None and not repair
-            ready, _, _ = select.select([self.process.stdout], [], [], deadline - now)
-            if not ready:
-                return due is not None and not repair
+            deadline = hard if due is None else min(due, latest) if repair else min(due, latest, hard)
+            if deadline <= now or not select.select([self.process.stdout], [], [], deadline - now)[0]:
+                if due is None or repair or time.monotonic() >= hard:
+                    return self.full()
+                return True
             lines = self.lines()
             if lines is None:
                 # The subscription ended: pipewire-pulse went away or is not up
                 # yet. Repair now, then resubscribe after a pause.
                 self.stop()
                 time.sleep(self.retry)
-                return False
+                return self.full()
             woken = False
             for line in lines:
                 if self.EVENT.match(line):
