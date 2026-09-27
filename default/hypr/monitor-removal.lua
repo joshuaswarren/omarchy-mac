@@ -4,16 +4,18 @@
 -- one you were on lands hidden behind that monitor's own. Measured on Hyprland
 -- 0.56.2 (CMonitor::onDisconnect).
 --
--- That warp is the only focus change made in the same event-loop turn as the
--- removal, so the workspace focused before it is kept for one turn and, when a
--- monitor.removed follows within that turn, focused again.
+-- monitor.focused fires before Hyprland records the new focus, so the monitor
+-- still reported as active is the one being left. The workspace it showed is
+-- kept until the event loop next turns, which the removal that caused the warp
+-- finishes well before: a monitor.removed inside that window brings it back.
 
-local focused = nil
-local before_removal = nil
+local left_behind = nil
+local generation = 0
+local moves = 0
+local restoring = false
 
-local function active_workspace()
-  local ws = hl.get_active_workspace()
-  if not ws or ws.special or type(ws.id) ~= "number" then
+local function selector(ws)
+  if not ws or type(ws.id) ~= "number" then
     return nil
   end
 
@@ -28,31 +30,59 @@ local function later(fn)
   hl.timer(fn, { timeout = 1, type = "oneshot" })
 end
 
-focused = active_workspace()
+hl.on("monitor.focused", function(monitor)
+  if restoring then
+    return
+  end
 
-hl.on("workspace.active", function()
-  focused = active_workspace()
-end)
+  generation = generation + 1
+  moves = moves + 1
+  left_behind = nil
 
-hl.on("monitor.focused", function()
-  before_removal = focused
-  focused = active_workspace()
+  local leaving = hl.get_active_monitor()
+  if not leaving or not monitor or leaving.name == monitor.name then
+    return
+  end
+
+  -- An open scratchpad already comes along to the front of the next monitor.
+  if hl.get_active_special_workspace(leaving) then
+    return
+  end
+
+  left_behind = selector(hl.get_active_workspace(leaving))
+  local seen = generation
   later(function()
-    before_removal = nil
+    if generation == seen then
+      left_behind = nil
+    end
   end)
 end)
 
+-- Only counts towards giving way to the user once the removal is over: the
+-- workspaces it moves between monitors fire this too, before monitor.removed.
+hl.on("workspace.active", function()
+  if not restoring then
+    moves = moves + 1
+  end
+end)
+
 hl.on("monitor.removed", function()
-  local workspace = before_removal
-  before_removal = nil
+  local workspace = left_behind
+  left_behind = nil
   if not workspace then
     return
   end
 
-  -- Let the removal finish before switching the surviving monitor.
+  -- Let the removal finish first, and give way to any focus or workspace change
+  -- since.
+  local seen = moves
   later(function()
-    if active_workspace() ~= workspace and hl.get_workspace(workspace) then
-      hl.dispatch(hl.dsp.focus({ workspace = workspace }))
+    if moves ~= seen or selector(hl.get_active_workspace()) == workspace or not hl.get_workspace(workspace) then
+      return
     end
+
+    restoring = true
+    pcall(hl.dispatch, hl.dsp.focus({ workspace = workspace }))
+    restoring = false
   end)
 end)

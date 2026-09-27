@@ -9,13 +9,39 @@ grep -Fx 'require("default.hypr.monitor-removal")' "$ROOT/default/hypr/omarchy.l
 pass "the Omarchy Hyprland config loads the monitor removal handler"
 
 # Replays the event order of Hyprland 0.56.2's CMonitor::onDisconnect: focus is
-# warped to the first remaining monitor (monitor.focused), the removed monitor's
-# workspaces move over hidden, then monitor.removed fires, all in one event-loop
-# turn. hl.timer callbacks only run once that turn is over.
+# warped to the first remaining monitor, and monitor.focused fires while the
+# monitor being left is still the active one (FocusState.cpp rawMonitorFocus).
+# The removed monitor's workspaces then move over hidden and monitor.removed
+# fires, all in one event-loop turn. hl.timer callbacks only run once that turn
+# is over.
 OMARCHY_PATH="$ROOT" lua - <<'LUA' || fail "a monitor removal keeps the focused workspace in front"
 local handlers, timers, dispatched = {}, {}, {}
-local active = { id = 1, name = "1" }
-local workspaces = { ["1"] = true, ["5"] = true, ["name:notes"] = true }
+local monitors, focused, workspaces, after_dispatch
+
+local function reset()
+  monitors = {
+    ["eDP-1"] = { name = "eDP-1", active = { id = 1, name = "1" } },
+    ["USB-2"] = { name = "USB-2", active = { id = 5, name = "5" } },
+  }
+  focused = "eDP-1"
+  workspaces = { ["1"] = true, ["5"] = true, ["name:notes"] = true }
+  dispatched = {}
+  after_dispatch = nil
+end
+
+-- Like rawMonitorFocus, which returns early when the monitor is unchanged.
+local function focus_moves(to, assign_first)
+  if focused == to then return end
+  if assign_first then focused = to end
+  handlers["monitor.focused"]({ name = to })
+  focused = to
+end
+
+local function switch_workspace(id)
+  monitors[focused].active = { id = id, name = tostring(id) }
+  workspaces[tostring(id)] = true
+  handlers["workspace.active"](monitors[focused].active)
+end
 
 hl = {
   on = function(event, callback)
@@ -25,14 +51,23 @@ hl = {
     assert(opts.type == "oneshot" and opts.timeout > 0)
     table.insert(timers, callback)
   end,
-  get_active_workspace = function()
-    return active
+  get_active_monitor = function()
+    return monitors[focused]
+  end,
+  get_active_workspace = function(monitor)
+    return (monitor or monitors[focused]).active
+  end,
+  get_active_special_workspace = function(monitor)
+    return (monitor or monitors[focused]).special
   end,
   get_workspace = function(selector)
     return workspaces[selector] and {} or nil
   end,
   dispatch = function(action)
     table.insert(dispatched, action.workspace)
+    -- Focusing a workspace on another monitor moves monitor focus too.
+    focus_moves("eDP-1")
+    if after_dispatch then after_dispatch() end
   end,
   dsp = {
     focus = function(args)
@@ -51,54 +86,94 @@ local function turn_ends()
   end
 end
 
-local function focus(workspace)
-  active = workspace
-  handlers["monitor.focused"]()
-  turn_ends()
-end
-
-local function unplug(backup_workspace)
-  if backup_workspace then
-    active = backup_workspace
-    handlers["monitor.focused"]()
+-- Unplug USB-2 the way Hyprland does; eDP-1 is first in its monitor list.
+local function unplug(opts)
+  opts = opts or {}
+  if focused == "USB-2" then
+    focus_moves("eDP-1", opts.assign_first)
+    -- Moving the active workspace off leaves the dying monitor a placeholder.
+    handlers["workspace.active"]({ id = 2, name = "2" })
   end
-  handlers["workspace.active"]()
-  handlers["monitor.removed"]()
+  monitors["USB-2"] = nil
+  handlers["monitor.removed"]({ name = "USB-2" })
+  if opts.then_focus then
+    focus_moves(opts.then_focus)
+  end
+  if opts.then_switch then
+    switch_workspace(opts.then_switch)
+  end
   turn_ends()
 end
 
 dofile(os.getenv("OMARCHY_PATH") .. "/default/hypr/bootstrap.lua")
 require("default.hypr.monitor-removal")
 
--- Working on the external display's workspace 5 when it is unplugged.
-focus({ id = 5, name = "5" })
-unplug({ id = 1, name = "1" })
+reset()
+focus_moves("USB-2"); turn_ends()
+unplug()
 assert(#dispatched == 1 and dispatched[1] == "5", "the workspace you were on comes to the front of the built-in panel")
 
--- Working on the built-in panel: Hyprland leaves focus alone, and so does this.
-dispatched = {}
-focus({ id = 1, name = "1" })
-unplug(nil)
+reset()
+unplug()
 assert(#dispatched == 0, "unplugging a display you were not on changes nothing")
 
--- A focus change the user made earlier is not mistaken for the removal's warp.
-dispatched = {}
-focus({ id = 5, name = "5" })
-focus({ id = 1, name = "1" })
-unplug(nil)
+reset()
+focus_moves("USB-2"); turn_ends()
+focus_moves("eDP-1"); turn_ends()
+unplug()
 assert(#dispatched == 0, "an earlier focus change does not switch the workspace later")
 
--- An empty workspace is gone once hidden, so there is nothing to bring back.
-dispatched = {}
-workspaces["5"] = nil
-focus({ id = 5, name = "5" })
-unplug({ id = 1, name = "1" })
-assert(#dispatched == 0, "a workspace that no longer exists is not recreated")
+reset()
+monitors["HDMI-A-1"] = { name = "HDMI-A-1", active = { id = 3, name = "3" } }
+focus_moves("USB-2"); turn_ends()
+unplug({ then_focus = "HDMI-A-1" })
+assert(#dispatched == 0, "a focus change after the removal wins over the restore")
 
--- Named workspaces carry negative ids, which a selector would read as relative.
-dispatched = {}
-focus({ id = -1337, name = "notes" })
-unplug({ id = 1, name = "1" })
+reset()
+focus_moves("USB-2"); turn_ends()
+unplug({ then_switch = 9 })
+assert(#dispatched == 0, "a workspace switch after the removal wins over the restore")
+
+reset()
+workspaces["5"] = nil
+focus_moves("USB-2"); turn_ends()
+unplug()
+assert(#dispatched == 0, "an empty workspace, gone once hidden, is not recreated")
+
+reset()
+monitors["USB-2"].special = { id = -98, name = "special:scratchpad" }
+focus_moves("USB-2"); turn_ends()
+unplug()
+assert(#dispatched == 0, "an open scratchpad is left in front")
+
+reset()
+monitors["USB-2"].active = { id = -1337, name = "notes" }
+focus_moves("USB-2"); turn_ends()
+unplug()
 assert(#dispatched == 1 and dispatched[1] == "name:notes", "a named workspace is focused by name")
+
+-- The restore's own focus change does not arm another one: here it leaves a
+-- third monitor, which is then removed in the same turn.
+reset()
+monitors["HDMI-A-1"] = { name = "HDMI-A-1", active = { id = 3, name = "3" } }
+workspaces["3"] = true
+focus_moves("USB-2"); turn_ends()
+focus_moves("eDP-1")
+monitors["USB-2"] = nil
+handlers["monitor.removed"]({ name = "USB-2" })
+focused = "HDMI-A-1"
+after_dispatch = function()
+  monitors["HDMI-A-1"] = nil
+  handlers["monitor.removed"]({ name = "HDMI-A-1" })
+end
+turn_ends()
+assert(#dispatched == 1 and dispatched[1] == "5", "restoring focus does not queue a second restore")
+
+-- A Hyprland that records focus before announcing it leaves nothing to restore
+-- from, so the handler stays out of the way rather than guessing.
+reset()
+focus_moves("USB-2"); turn_ends()
+unplug({ assign_first = true })
+assert(#dispatched == 0, "a changed event order degrades to Hyprland's own behaviour")
 LUA
 pass "a monitor removal keeps the focused workspace in front"
