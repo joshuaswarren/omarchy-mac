@@ -146,9 +146,7 @@ for leaf in touchpad mic electron-gl share-picker browser-video-decode; do
   [[ ! -e $ROOT/install/user/hardware/apple/$leaf.sh ]] && ! grep -rq "user/hardware/apple/$leaf.sh" "$ROOT/install" "$ROOT/bin" "$ROOT/migrations" ||
     fail "the user leaf apple/$leaf.sh is gone with its callers"
 done
-[[ ! -e $ROOT/default/pacman/apple-silicon/pacman-edge.conf ]] ||
-  cmp -s "$ROOT/default/pacman/apple-silicon/pacman-edge.conf" "$ROOT/packages/omarchy-mac/share/omarchy-mac/pacman/pacman-edge.conf" ||
-  fail "the runtime's transitional Apple template matches omarchy-mac's"
+[[ ! -e $ROOT/default/pacman/apple-silicon ]] || fail "the Apple pacman templates are omarchy-mac's, not the runtime's"
 pass "the runtime keeps no Apple desktop leaf, only forwarders for queued hardware steps"
 
 grep -A4 '^copy_chromium_flags()' "$ROOT/bin/omarchy-install-browser" | grep -Fxq '  omarchy-lifecycle-dispatch setup-user' ||
