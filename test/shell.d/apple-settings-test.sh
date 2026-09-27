@@ -132,7 +132,7 @@ pass 'the video decode and audio repairs set up the Mac and ask for the reboot t
 # Fresh setup no longer calls omarchy-mac from the network leaf: the last
 # hardware leaf runs its setup through the dispatcher.
 ! grep -q 'omarchy-mac' "$ROOT/install/hardware/network.sh" || fail 'the network leaf names no Apple package'
-grep -Fxq omarchy-mac "$ROOT/install/omarchy-apple.packages" || fail 'Apple fresh-install inputs require the package'
+grep -Fxq omarchy-mac "$ROOT/install/omarchy-apple-silicon.packages" || fail 'Apple fresh-install inputs require the package'
 pass 'fresh Apple installs get omarchy-mac from the Apple list and its setup from the platform leaf'
 
 # The Apple desktop leaves moved into omarchy-mac. What stays in the runtime
@@ -159,7 +159,7 @@ list_names() {
   sed -e 's/[[:space:]]*#.*$//' -e '/^[[:space:]]*$/d' "$@"
 }
 for package in avd-fw libva-v4l2_request-avd; do
-  list_names "$ROOT/install/omarchy-apple.packages" | grep -Fxq "$package" ||
+  list_names "$ROOT/install/omarchy-apple-silicon.packages" | grep -Fxq "$package" ||
     fail "Apple Silicon images install $package from the Apple package list"
   ! list_names "$ROOT/install/omarchy-base.packages" "$ROOT/install/omarchy-other.packages" | grep -Fxq "$package" ||
     fail "$package stays out of the package lists every platform installs"

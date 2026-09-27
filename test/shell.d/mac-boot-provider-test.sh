@@ -10,7 +10,7 @@ printf '#!/bin/bash\nexit 0\n' >"$work/bin/omarchy-hw-apple-silicon"
 chmod +x "$work/bin/omarchy-hw-apple-silicon"
 export PATH="$work/bin:$PATH" OMARCHY_PATH="$work/runtime"
 export OMARCHY_PROVISION_OWNER_SOURCE=1
-grep -Fxq omarchy-mac-boot "$ROOT/install/omarchy-apple.packages" || fail "Apple fresh-install inputs carry the boot package"
+grep -Fxq omarchy-mac-boot "$ROOT/install/omarchy-apple-silicon.packages" || fail "Apple fresh-install inputs carry the boot package"
 pass "Apple installs carry the boot package their lifecycles dispatch to"
 bash "$ROOT/packages/omarchy-mac/boot/install" "$work/stage"
 bash -c 'source "$1"' _ "$ROOT/bin/omarchy-provision-owner"
