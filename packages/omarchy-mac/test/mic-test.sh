@@ -548,6 +548,25 @@ with mock.patch.object(m.Audio, 'run', return_value='536870912\tmodule-null-sink
 listing = '536870911\tlibpipewire-module-rt\t{\n            nice.level    = -11\n        }\t\n536870912\tmodule-null-sink\tsink_name=omarchy_asahi_mic\t1'
 with mock.patch.object(m.Audio, 'run', return_value=listing):
     assert [module['index'] for module in m.Audio().modules()] == ['536870911', '536870912'], 'multi-line module arguments must not break rollback'
+# Apps show the mapping by its family name, as macOS does: the MacBook's name on
+# a MacBook, "Built-in" on any other Mac, never a board code. The name is one
+# quoted value inside sink_properties, with the ownership marker still there.
+with tempfile.TemporaryDirectory() as temporary:
+    for model, name in (('Apple MacBook Pro (14-inch, M1 Pro, 2021)\0', 'MacBook Microphone'),
+                        ('Apple MacBook Air (13-inch, M2, 2022)\0', 'MacBook Microphone'),
+                        ('Apple iMac (24-inch, 4x USB-C, M1, 2021)\0', 'Built-in Microphone'),
+                        (None, 'Built-in Microphone')):
+        path = Path(temporary) / 'model'
+        path.unlink(missing_ok=True)
+        if model is not None: path.write_text(model)
+        with mock.patch.object(m, 'MODEL', path):
+            audio = Audio()
+            m.reconcile(audio, Path(temporary) / 'state.json')
+        load = next(call for call in audio.calls if call[:2] == ('pactl', 'load-module'))
+        properties = next(arg for arg in load if arg.startswith('sink_properties='))
+        assert properties.startswith("sink_properties='device.description=\"" + name + "\" ") and properties.endswith("'"), properties
+        assert 'AsahiMicrophone' not in properties and m.OWNER + '=' in properties
+        assert m.owned(audio.module, 'Audio/Source/Virtual'), 'the quoted name must not hide the mapping from its owner'
 unit = (root / 'vendor/systemd/user/omarchy-asahi-mic.service').read_text()
 assert '--watch' in unit and 'PartOf=graphical-session.target' in unit
 assert 'PartOf=pipewire.service' not in unit and 'After=graphical-session.target' not in unit

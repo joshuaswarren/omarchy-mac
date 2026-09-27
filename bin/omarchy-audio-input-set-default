@@ -15,6 +15,12 @@ fi
 wpctl set-default "$node_id" 2>/dev/null || true
 pactl set-default-source "$source_name" 2>/dev/null || true
 
-pactl list short source-outputs 2>/dev/null | awk '{ print $1 }' | while read -r output; do
+# asahi-audio's microphone DSP on Apple Silicon captures the raw array through
+# a source output of its own (audio_effect.jNNN-mic). Moving it would feed the
+# processing from the new input, or from its own output.
+LC_ALL=C pactl list source-outputs 2>/dev/null | awk '
+  /^Source Output #/ {if (id != "" && !dsp) print id; id = substr($3, 2); dsp = 0}
+  /node\.name = "audio_effect\.j[0-9]+-mic"$/ {dsp = 1}
+  END {if (id != "" && !dsp) print id}' | while read -r output; do
   [[ -n $output ]] && pactl move-source-output "$output" "$source_name" 2>/dev/null || true
 done

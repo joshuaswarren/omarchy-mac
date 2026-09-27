@@ -28,6 +28,7 @@ LEGACY = MAPPING + '.monitor'
 OWNER = 'omarchy.asahi-mic.owner'
 ROUTE_CLIENT = 'omarchy-asahi-mic-route'
 DSP = re.compile(r'effect_output\.j[0-9]+-mic')
+MODEL = Path('/proc/device-tree/model')
 OUTAGE_GRACE = 10.0
 outage = dict(since=None, notified=False)
 
@@ -318,6 +319,16 @@ def outage_due():
     return max(0.1, outage['since'] + OUTAGE_GRACE - time.monotonic())
 
 
+def description():
+    # The name apps show for the microphone, as macOS words it: the family, not
+    # the board code asahi-audio puts in its own nodes.
+    try:
+        model = MODEL.read_bytes().decode(errors='replace')
+    except OSError:
+        model = ''
+    return ('MacBook' if 'MacBook' in model else 'Built-in') + ' Microphone'
+
+
 def find_dsp(sources):
     return next((obj['name'] for obj in sources if DSP.fullmatch(obj['name'])), None)
 
@@ -372,7 +383,7 @@ def reconcile(audio, state, save_only=False, checked=None):
         else:
             module = audio.run('pactl', 'load-module', 'module-null-sink', 'media.class=Audio/Source/Virtual',
                                'sink_name=' + MAPPING, 'channels=2', 'channel_map=front-left,front-right',
-                               'sink_properties=device.description=AsahiMicrophone node.virtual=true priority.session=1 ' + OWNER + '=' + owner)
+                               "sink_properties='device.description=\"" + description() + "\" node.virtual=true priority.session=1 " + OWNER + '=' + owner + "'")
             if not module.isdecimal():
                 raise RuntimeError('PulseAudio did not return a module identity')
             # A new mapping may reuse the port IDs of one sampled before an

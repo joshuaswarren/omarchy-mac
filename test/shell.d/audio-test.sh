@@ -46,4 +46,31 @@ assertEqual(audio.matchingMprisStreamLabel('Chromium', players), 'Chromium', 'au
 assertEqual(audio.unmatchedMprisStreamLabel('audio-src', players, streams), 'Spotify', 'audio uses unmatched MPRIS player for generic streams')
 assertEqual(audio.streamLabel(streams[1], players, streams), 'Spotify', 'audio labels generic streams from MPRIS')
 assert(audio.streamRepresentsPlayer(streams[1], players[0], players, streams), 'audio links generic streams to active player')
+
+// Apple Silicon: asahi-audio's DSP graph streams leave the per-app list; the
+// speaker sink and anything outside asahi-audio's names stay. The panel asks
+// only on an Apple Silicon host.
+for (const board of ['j314', 'j416', 'j613']) {
+  assert(audio.isAsahiInternalStream('effect_output.' + board + '-convolver'), 'audio hides the speaker DSP output on ' + board)
+  assert(audio.isAsahiInternalStream('audio_effect.' + board + '-mic'), 'audio hides the microphone DSP capture on ' + board)
+  assert(!audio.isAsahiInternalStream('audio_effect.' + board + '-convolver'), 'audio keeps the speaker sink on ' + board)
+}
+for (const name of ['effect_output.eq6', 'omarchy_speaker_tuning', 'Firefox', 'effect_output.j416-convolver-eq', '', undefined])
+  assert(!audio.isAsahiInternalStream(name), 'audio keeps stream ' + name)
+
+// The mono DSP microphone is hidden only while the mapper's stereo copy exists;
+// the raw devices asahi-audio marks "do not use" are always hidden.
+assert(audio.asahiSourceHidden('effect_output.j314-mic', true), 'audio hides the DSP microphone behind its mapping')
+assert(!audio.asahiSourceHidden('effect_output.j314-mic', false), 'audio keeps the DSP microphone without a mapping')
+assert(audio.asahiSourceHidden('alsa_input.platform-sound.RawMics', false), 'audio hides the raw microphone array')
+assert(audio.isAsahiRawDevice('alsa_output.platform-sound.RawSpeakers'), 'audio hides the raw speakers')
+for (const name of ['omarchy_asahi_mic', 'alsa_input.platform-sound.HiFi__Headset__source', 'alsa_input.pci-0000_00_1f.3.analog-stereo'])
+  assert(!audio.asahiSourceHidden(name, true), 'audio keeps input ' + name)
+assert(audio.isAsahiMicMapping('omarchy_asahi_mic') && !audio.isAsahiMicMapping('omarchy_asahi_mic.monitor'), 'audio names the mapping exactly')
+
+// The mapping has no PwNode.audio, so its level is read from wpctl.
+assertDeepEqual(audio.parseWpctlVolume('Volume: 0.50\n'), { volume: 0.5, muted: false }, 'audio reads a wpctl volume')
+assertDeepEqual(audio.parseWpctlVolume('Volume: 1.00 [MUTED]'), { volume: 1, muted: true }, 'audio reads a muted wpctl volume')
+for (const text of ['', 'Translate ID error: 404', 'Volume: loud', 'Volume: 0.50 [muted]'])
+  assertEqual(audio.parseWpctlVolume(text), null, 'audio rejects wpctl output ' + JSON.stringify(text))
 JS
