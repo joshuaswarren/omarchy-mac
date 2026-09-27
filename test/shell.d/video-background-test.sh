@@ -157,9 +157,9 @@ assert(
   lockService.includes('function screenBlank(screenName)') &&
     lockService.includes('function applyMonitorDpms(text)') &&
     lockService.includes('command: ["hyprctl", "monitors", "-j"]') &&
-    lockService.includes('running: root.locked && root.videoBackground') &&
+    lockService.includes('running: root.locked && (root.videoBackground || root.displaysBlank)') &&
     /displaysBlank: root\.screenBlank\(lockSurface\.screen/.test(lockService) &&
-    /function runWake\(\) \{[\s\S]*?root\.monitorDpmsKnown = false/.test(lockService) &&
+    /function runWake\([^)]*\) \{[\s\S]*?root\.monitorDpmsKnown = false/.test(lockService) &&
     /function runBlank\(\) \{[\s\S]*?root\.monitorDpmsKnown = false/.test(lockService),
   'a locked video wallpaper follows what each panel actually did, not only what the lock asked for'
 )
@@ -168,8 +168,8 @@ assert(
     lockView.includes('&& !root.powerSaverActive') &&
     /displaysBlank: root\.screenBlank\(/.test(lockService) &&
     /powerSaverActive: root\.powerSaverActive/.test(lockService) &&
-    /function runBlank\(\) \{\s*\n\s*root\.displaysBlank = true/.test(lockService) &&
-    /function runWake\(\) \{\s*\n\s*root\.displaysBlank = false/.test(lockService),
+    /function runBlank\(\) \{[\s\S]*?root\.displaysBlank = true/.test(lockService) &&
+    /function runWake\([^)]*\) \{[\s\S]*?root\.displaysBlank = false/.test(lockService),
   'the lock screen stops playback once displays go dark or power-saver is active'
 )
 assert(

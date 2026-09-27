@@ -32,12 +32,20 @@ Item {
   property string lastEvent: "init"
   property string lastEventAt: ""
   property bool displaysBlank: false
+  // A lock that is not touched goes dark after blankRunUp. One that was just
+  // woken, from a blank panel or from suspend, stays lit for wakeRunUp first:
+  // the user is looking at it.
+  readonly property int blankRunUp: 5000
+  readonly property int wakeRunUp: 30000
   // displaysBlank tracks what the lock asked for; Hyprland reports what each
   // panel actually did. While a video is on show the two are reconciled, so a
   // blank that failed keeps playing and a panel woken behind the lock's back
   // (a resume that kept the same outputs) resumes instead of freezing.
   property var monitorDpms: ({})
   property bool monitorDpmsKnown: false
+  // Bumped by every wake and blank, so a DPMS answer asked for before one of
+  // them is dropped instead of undoing it.
+  property int dpmsEpoch: 0
   // Hyprland lights every panel for a key when any one is dark, so the key that
   // does it is a wake key whichever panel's lock surface holds keyboard focus.
   readonly property bool anyDisplayBlank: displaysBlank && (!monitorDpmsKnown || anyMonitorDark(monitorDpms))
@@ -172,19 +180,27 @@ Item {
     runWake()
   }
 
-  function armBlankTimer() {
-    idleBlankTimer.armedAt = Date.now()
+  // Input re-arms the short run-up but never cuts a longer one short.
+  function armBlankTimer(runUp) {
+    var interval = runUp || blankRunUp
+    var now = Date.now()
+    if (idleBlankTimer.running && idleBlankTimer.armedAt + idleBlankTimer.interval - now > interval) return
+    idleBlankTimer.interval = interval
+    idleBlankTimer.armedAt = now
     idleBlankTimer.restart()
   }
 
-  function runWake() {
+  function runWake(runUp) {
+    var fromBlank = root.displaysBlank
+    root.dpmsEpoch += 1
     root.displaysBlank = false
     root.monitorDpmsKnown = false
     if (!wakeProcess.running) wakeProcess.running = true
-    if (lockRequested) armBlankTimer()
+    if (lockRequested) armBlankTimer(runUp || (fromBlank ? wakeRunUp : blankRunUp))
   }
 
   function runBlank() {
+    root.dpmsEpoch += 1
     root.displaysBlank = true
     root.monitorDpmsKnown = false
     if (!blankProcess.running) blankProcess.running = true
@@ -220,6 +236,20 @@ Item {
     monitorDpms = dpms
     monitorDpmsKnown = true
     return true
+  }
+
+  // Hyprland lights the panels for input that never reaches the lock, such as
+  // the power button, which is a locked bind. Every enabled panel lit while the
+  // lock thinks it is blank is such a wake, and gets the same run-up as a key.
+  function takeMonitorDpms(text, epoch) {
+    if (epoch !== dpmsEpoch || blankProcess.running || wakeProcess.running) return
+    // A panel coming back mid-blank is the screen-change settle's to judge.
+    if (screenDpmsSettleTimer.running || screenDpmsProcess.running) return
+    if (!applyMonitorDpms(text)) return
+    if (!displaysBlank || !lockRequested) return
+    if (Object.keys(monitorDpms).length === 0 || anyMonitorDark(monitorDpms)) return
+    logEvent("woken-behind-lock")
+    runWake(wakeRunUp)
   }
 
   // Give up the blank state only once no panel is dark. An answer that cannot be
@@ -467,32 +497,39 @@ Item {
   Process {
     id: wakeProcess
     command: ["bash", "-c", "omarchy-system-wake"]
+    onExited: root.dpmsEpoch += 1
   }
 
   Process {
     id: blankProcess
     command: ["bash", "-c", "omarchy-brightness-keyboard off; omarchy-brightness-display off"]
+    onExited: root.dpmsEpoch += 1
   }
 
   // Quickshell exposes no DPMS signal, so the panel state is polled while a
-  // video is the locked wallpaper. A wake or blank request drops the last
-  // answer, so its optimistic state applies until the next poll confirms it.
+  // video is the locked wallpaper, and while the lock is blank to notice a wake
+  // it did not see. A wake or blank request drops the last answer, so its
+  // optimistic state applies until the next poll confirms it.
   Process {
     id: monitorDpmsProcess
+    property int epoch: 0
     command: ["hyprctl", "monitors", "-j"]
     stdout: StdioCollector {
-      onStreamFinished: root.applyMonitorDpms(text)
+      onStreamFinished: root.takeMonitorDpms(text, monitorDpmsProcess.epoch)
     }
   }
 
   Timer {
     id: monitorDpmsTimer
-    interval: 3000
+    // Nothing re-blanks before a wake is noticed, so a still wallpaper can wait longer.
+    interval: root.videoBackground ? 3000 : 5000
     repeat: true
     triggeredOnStart: true
-    running: root.locked && root.videoBackground
+    running: root.locked && (root.videoBackground || root.displaysBlank)
     onTriggered: {
-      if (!monitorDpmsProcess.running) monitorDpmsProcess.running = true
+      if (monitorDpmsProcess.running || blankProcess.running || wakeProcess.running) return
+      monitorDpmsProcess.epoch = root.dpmsEpoch
+      monitorDpmsProcess.running = true
     }
     onRunningChanged: {
       if (!running) root.monitorDpmsKnown = false
@@ -524,7 +561,7 @@ Item {
 
   Timer {
     id: idleBlankTimer
-    interval: 5000
+    interval: root.blankRunUp
     repeat: false
     property double armedAt: 0
     onTriggered: {
@@ -532,7 +569,7 @@ Item {
       // blank the freshly woken unlock screen under the user. Wall-clock time
       // exposes the gap: take a fresh run-up instead of blanking.
       if (Date.now() - armedAt > interval + 2000) {
-        root.armBlankTimer()
+        root.armBlankTimer(root.wakeRunUp)
         return
       }
       // Only a password check in flight should hold the display up. The
@@ -550,15 +587,16 @@ Item {
     interval: 1000
     repeat: true
     running: root.lockRequested
+    // Start the clock with the lock: sleep-lock suspends within a second of it.
     property double lastTick: 0
-    onRunningChanged: lastTick = 0
+    onRunningChanged: lastTick = running ? Date.now() : 0
     onTriggered: {
       var now = Date.now()
       var resumed = lastTick > 0 && now - lastTick > interval + 2000
       lastTick = now
       if (resumed) {
         root.logEvent("resume-detected")
-        root.runWake()
+        root.runWake(root.wakeRunUp)
       }
     }
   }
