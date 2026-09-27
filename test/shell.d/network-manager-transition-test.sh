@@ -26,8 +26,10 @@ grep -F '20-wlan.network' "$hardware_network" >/dev/null
 grep -F 'omarchy-networkd-retired' "$hardware_network" >/dev/null
 pass "hardware setup retires archinstall networkd state"
 
-# Keep NetworkManager's Apple Silicon backend alongside upstream's networkd cleanup.
-grep -F 'omarchy-hw-apple-silicon' "$hardware_network" >/dev/null
-grep -F 'pacman -Q omarchy-mac' "$hardware_network" >/dev/null
+# Apple Silicon's iwd backend is omarchy-mac's, set up by the platform leaf
+# that ends hardware setup; the network leaf keeps no Apple branch.
+! grep -Eq 'omarchy-hw-apple-silicon|omarchy-mac' "$hardware_network" || fail 'the network leaf has no Apple branch'
 ! grep -F 'install -Dm644 /dev/stdin' "$hardware_network" >/dev/null || fail 'Wi-Fi configuration is package-owned'
-pass "hardware setup keeps NetworkManager on the iwd backend for Apple Silicon"
+[[ $(grep '^run_logged' "$ROOT/install/hardware/all.sh" | tail -n 1) == 'run_logged "$OMARCHY_INSTALL/hardware/platform-setup.sh"' ]] ||
+  fail 'the platform setup ends hardware setup'
+pass "hardware setup leaves Apple Silicon's iwd backend to omarchy-mac's setup"

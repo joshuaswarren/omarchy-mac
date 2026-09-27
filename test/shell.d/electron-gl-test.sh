@@ -245,9 +245,9 @@ for command in mktemp tee chmod mv; do
 done
 pass "mktemp, write, chmod, and rename failures preserve launchers and clean up staged files"
 
-grep -Fq 'apple/electron-gl.sh' "$ROOT/install/user/all.sh" ||
-  fail "Apple Electron GL setup runs during user hardware setup"
-pass "Apple Electron GL setup runs during user hardware setup"
+grep -Fq 'user/platform-setup.sh' "$ROOT/install/user/all.sh" && [[ -x $ROOT/packages/omarchy-mac/lib/electron-desktop-entries ]] ||
+  fail "Apple Electron GL setup runs during user hardware setup, through omarchy-mac"
+pass "Apple Electron GL setup runs during user hardware setup, through omarchy-mac"
 
 grep -Fq 'exec setsid uwsm-app -- 1password' "$ROOT/bin/omarchy-launch-1password" ||
   fail "1Password launcher is still the upstream uwsm-app invocation"
@@ -266,7 +266,11 @@ cat >"$apple_stub/omarchy-hw-apple-silicon" <<'SH'
 #!/bin/bash
 [[ -f ${OMARCHY_DEVICE_TREE_COMPATIBLE:-} ]] && grep -qi apple "$OMARCHY_DEVICE_TREE_COMPATIBLE"
 SH
-chmod +x "$apple_stub/omarchy-hw-apple-silicon"
+cat >"$apple_stub/omarchy-hw-platform" <<'SH'
+#!/bin/bash
+if omarchy-hw-apple-silicon; then echo apple-silicon; else echo generic; fi
+SH
+chmod +x "$apple_stub/omarchy-hw-apple-silicon" "$apple_stub/omarchy-hw-platform"
 
 run_apple_gl() {
   HOME="$test_tmp/home" \
@@ -276,7 +280,7 @@ run_apple_gl() {
     OMARCHY_CHROMIUM_BIN=/dev/null/missing \
     OMARCHY_1PASSWORD_BIN=/dev/null/missing \
     OMARCHY_CURSOR_BIN=/dev/null/missing \
-    bash -euo pipefail -c 'source "$ROOT/install/user/hardware/apple/electron-gl.sh"'
+    "$ROOT/packages/omarchy-mac/lib/electron-desktop-entries"
 }
 
 run_apple_gl

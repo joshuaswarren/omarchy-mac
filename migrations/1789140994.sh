@@ -15,4 +15,10 @@ if systemctl is-enabled --quiet omarchy-wifi-resume-fix.service 2>/dev/null; the
   exit 0
 fi
 
-sudo bash "$OMARCHY_PATH/install/hardware/apple/fix-wifi-resume.sh"
+# omarchy-mac's system setup enables the recovery service. The resolve is an
+# assignment so an undetermined platform fails the migration instead of
+# skipping it.
+entrypoint=$(omarchy-lifecycle-dispatch --resolve setup-system)
+if [[ -n $entrypoint ]]; then
+  sudo omarchy-lifecycle-dispatch setup-system
+fi

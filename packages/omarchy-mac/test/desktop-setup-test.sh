@@ -17,6 +17,10 @@ for channel in stable rc edge; do
   grep -qx '\[asahi-alarm\]' "$template" && grep -qx '\[omarchy\]' "$template" ||
     fail "the Apple $channel pacman template is staged with [asahi-alarm] and [omarchy]"
 done
+[[ -x $stage/usr/bin/omarchy-hw-apple && $(readlink "$stage/usr/share/omarchy/bin/omarchy-hw-apple") == /usr/bin/omarchy-hw-apple ]] ||
+  fail 'the legacy alias is staged in /usr/bin and linked from the runtime tree'
+[[ -f $stage/usr/share/omarchy/default/hypr/platform/apple-gestures.lua ]] ||
+  fail "the three-finger workspace swipe is staged in the runtime's platform directory"
 for helper in electron-launchers electron-desktop-entries; do
   [[ -x $stage/usr/lib/omarchy-mac/$helper ]] || fail "$helper is staged"
 done

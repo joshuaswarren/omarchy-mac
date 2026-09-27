@@ -5,6 +5,9 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 destination=${1:?Usage: ./install DESTDIR}
 [[ $destination == /* && $destination != "/" ]] || { echo "Use an absolute staging directory" >&2; exit 1; }
 for file in bin/*; do install -Dm755 "$file" "$destination/usr/bin/${file##*/}"; done
+# The runtime links every command into its tree; the legacy alias keeps that path.
+install -d "$destination/usr/share/omarchy/bin"
+ln -sfn /usr/bin/omarchy-hw-apple "$destination/usr/share/omarchy/bin/omarchy-hw-apple"
 for file in lib/*; do install -Dm755 "$file" "$destination/usr/lib/omarchy-mac/${file##*/}"; done
 for file in entrypoints/*; do install -Dm755 "$file" "$destination/usr/lib/omarchy/mac/${file##*/}"; done
 while IFS= read -r -d '' file; do

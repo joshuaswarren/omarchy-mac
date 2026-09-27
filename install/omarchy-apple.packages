@@ -11,7 +11,7 @@ omarchy-mac-boot
 asahi-bless
 
 # Audio: PipeWire's PulseAudio server and realtime scheduling, which x86_64
-# gets from its installer, and the Asahi speaker stack (install/hardware/apple/audio.sh).
+# gets from its installer, and the Asahi speaker stack (omarchy-mac depends on it too).
 alsa-ucm-conf-asahi
 asahi-audio
 pipewire-alsa
@@ -22,7 +22,7 @@ speakersafetyd
 # The GPU's Vulkan driver (install/hardware/vulkan.sh).
 vulkan-asahi
 
-# Hardware video decode (install/hardware/apple/video-decode.sh).
+# Hardware video decode (omarchy-mac depends on it too).
 avd-fw
 libva-v4l2_request-avd
 

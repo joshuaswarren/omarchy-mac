@@ -7,6 +7,17 @@ require_command lua
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 
+# The runtime as installed beside omarchy-mac, which puts its gesture in the
+# runtime's platform directory.
+omarchy="$tmpdir/omarchy"
+mkdir -p "$omarchy"
+for entry in "$ROOT"/*; do
+  [[ ${entry##*/} == "default" ]] || ln -s "$entry" "$omarchy/${entry##*/}"
+done
+cp -R "$ROOT/default" "$omarchy/default"
+mkdir -p "$omarchy/default/hypr/platform"
+cp "$ROOT/packages/omarchy-mac/share/omarchy/default/hypr/platform/apple-gestures.lua" "$omarchy/default/hypr/platform/"
+
 mkdir -p "$tmpdir/apple-bin" "$tmpdir/other-bin"
 printf '#!/bin/sh\nexit 0\n' >"$tmpdir/apple-bin/omarchy-hw-apple-silicon"
 printf '#!/bin/sh\nexit 1\n' >"$tmpdir/other-bin/omarchy-hw-apple-silicon"
@@ -18,7 +29,7 @@ chmod +x "$tmpdir"/*-bin/omarchy-hw-apple-silicon
 # gesture on the same fingers and mods is refused once an earlier one covers
 # its direction or axis, and the refusal is a config error.
 load_config() {
-  local platform="$1" edit="${2:-}"
+  local platform="$1" edit="${2:-}" omarchy_path="${OMARCHY_UNDER_TEST:-$omarchy}" packaged_path="${PACKAGED_UNDER_TEST:-$omarchy}"
   local home
   home=$(mktemp -d "$tmpdir/home.XXXXXX")
 
@@ -26,7 +37,7 @@ load_config() {
   cp -R "$ROOT/config/hypr" "$home/.config/hypr"
   [[ -z $edit ]] || printf '%s\n' "$edit" >>"$home/.config/hypr/input.lua"
 
-  HOME="$home" XDG_CONFIG_HOME="$home/.config" XDG_STATE_HOME="$home/.local/state" OMARCHY_PATH="$ROOT" \
+  HOME="$home" XDG_CONFIG_HOME="$home/.config" XDG_STATE_HOME="$home/.local/state" OMARCHY_PATH="$omarchy_path" OMARCHY_PACKAGED_PATH="$packaged_path" \
     PATH="$tmpdir/$platform-bin:$PATH" lua <<'LUA'
 local function proxy()
   return setmetatable({}, {
@@ -114,7 +125,13 @@ swipe="3 horizontal workspace"
 
 [[ $(load_config apple) == "$swipe" ]] || fail "a Mac swipes between workspaces with three fingers" "$(load_config apple)"
 [[ -z $(load_config other) ]] || fail "x86 and Snapdragon keep no default gesture" "$(load_config other)"
-pass "three-finger workspace swipe is on by default on Macs only"
+[[ -z $(OMARCHY_UNDER_TEST=$ROOT PACKAGED_UNDER_TEST=$ROOT load_config apple) ]] ||
+  fail "the runtime alone carries no Mac gesture" "$(OMARCHY_UNDER_TEST=$ROOT PACKAGED_UNDER_TEST=$ROOT load_config apple)"
+[[ $(OMARCHY_UNDER_TEST=$ROOT load_config apple) == "$swipe" ]] ||
+  fail "a development checkout in OMARCHY_PATH keeps the packaged gesture" "$(OMARCHY_UNDER_TEST=$ROOT load_config apple)"
+[[ ! -e $ROOT/default/hypr/apple-gestures.lua && -z $(find "$ROOT/default/hypr" -path '*platform*') ]] ||
+  fail "the Mac gesture is omarchy-mac's, not the runtime's"
+pass "three-finger workspace swipe is on by default on Macs only, from omarchy-mac"
 
 shipped_line=$(sed -nE 's/^-- (hl\.gesture\(\{ fingers = 3, direction = "horizontal".*)$/\1/p' "$ROOT/config/hypr/input.lua")
 [[ -n $shipped_line ]] || fail "input.lua still ships the workspace gesture example"
