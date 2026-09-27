@@ -17,6 +17,11 @@ printf '%s %s\n' "${0##*/}" "$*" >>"$CALLS"
 exit "${REBUILD_STATUS:-0}"
 STUB
 done
+# The builder may itself be a Limine Mac: GRUB until a case says otherwise.
+cat >"$work/bin/omarchy-mac-limine-active" <<'STUB'
+#!/bin/bash
+[[ ${LIMINE:-0} == 1 ]]
+STUB
 cat >"$work/bin/modprobe" <<'STUB'
 #!/bin/bash
 [[ $* == -c ]] && printf '%s\n' 'options appledrm show_notch=1' "${MODPROBE_CONFIG:-}"
@@ -141,13 +146,8 @@ options hid_apple iso_layout=0 fnmode=0x2' "$setup" 2 >/dev/null
 [[ $(<"$param") == 0x2 ]] || fail 'the live switch writes the last configured fnmode as written'
 pass 'the live switch follows the configuration the rebuilt image loads'
 
-cat >"$work/bin/omarchy-mac-limine-active" <<'STUB'
-#!/bin/bash
-exit 0
-STUB
-chmod +x "$work/bin/omarchy-mac-limine-active"
 reset
 printf 'options hid_apple fnmode=2\n' >"$conf"
-"$setup" 2 >/dev/null
+LIMINE=1 "$setup" 2 >/dev/null
 [[ $(<"$CALLS") == 'omarchy-mac-boot-update ' ]] || fail 'a Limine Mac rebuilds its UKI' "$(cat "$CALLS")"
 pass 'a Limine Mac rebuilds through omarchy-mac-boot-update'
