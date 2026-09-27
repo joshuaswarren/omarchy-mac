@@ -166,8 +166,7 @@ Panel {
   readonly property real outputVolume: volumeSink && volumeSink.audio ? volumeSink.audio.volume : 0
   readonly property bool outputMuted: volumeSink && volumeSink.audio ? volumeSink.audio.muted : false
   // The Apple microphone mapping is a virtual source without PwNode.audio, so
-  // its volume and mute go through wpctl and its level is read at the DSP
-  // microphone that feeds it.
+  // its volume and mute go through wpctl.
   readonly property bool inputViaWpctl: appleHost && !!source && !source.audio && Model.isAsahiMicMapping(source.name)
   readonly property bool inputLevelKnown: !inputViaWpctl || mappedInput.known
   readonly property real inputVolume: inputViaWpctl ? mappedInput.volume : (source && source.audio ? source.audio.volume : 0)
@@ -177,6 +176,8 @@ Panel {
   // omarchy-mac helper records the mapping and prints its level.
   readonly property var inputPeakNode: inputViaWpctl ? null : source
   property real mappedInputPeak: 0
+  readonly property bool mappedInputMetered: opened && inputViaWpctl
+  onMappedInputMeteredChanged: mappedInputLevel.running = mappedInputMetered
 
   onRawAudioSinksChanged: if (rawAudioSinks.length > 0) cachedAudioSinks = rawAudioSinks
   onRawAudioSourcesChanged: if (rawAudioSources.length > 0) cachedAudioSources = rawAudioSources
@@ -623,13 +624,21 @@ Panel {
     enabled: root.opened && !!root.inputPeakNode
   }
 
+  // Tied to the shell's life, and started again if audio restarts under it.
   Process {
-    running: root.opened && root.inputViaWpctl
-    command: ["omarchy-audio-asahi-mic-level"]
+    id: mappedInputLevel
+    command: ["setpriv", "--pdeathsig", "TERM", "omarchy-audio-asahi-mic-level"]
     stdout: SplitParser {
       onRead: function(line) { root.mappedInputPeak = Math.max(0, Math.min(1, parseFloat(line) || 0)) }
     }
     onRunningChanged: if (!running) root.mappedInputPeak = 0
+    onExited: if (root.mappedInputMetered) mappedInputLevelRetry.restart()
+  }
+
+  Timer {
+    id: mappedInputLevelRetry
+    interval: 2000
+    onTriggered: if (root.mappedInputMetered && !mappedInputLevel.running) mappedInputLevel.running = true
   }
 
   WpctlNodeLevel {
@@ -1009,7 +1018,7 @@ Panel {
 
                   Rectangle {
                     height: parent.height
-                    width: parent.width * Math.max(0, Math.min(1, root.inputViaWpctl ? root.mappedInputPeak : inputPeakMonitor.peak))
+                    width: parent.width * Math.max(0, Math.min(1, root.inputViaWpctl ? (root.inputMuted ? 0 : root.mappedInputPeak) : inputPeakMonitor.peak))
                     color: root.bar.foreground
                     Behavior on width { NumberAnimation { duration: 70 } }
                   }
