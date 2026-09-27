@@ -4,7 +4,7 @@
 -- Hyprland rejecting it as a duplicate. Lines added to hyprland.lua after the
 -- toggles come too late for that, which is why the manual points at input.lua.
 
-if _G.omarchy_workspace_gesture == false or not o.apple_silicon() then
+if _G.omarchy_workspace_gesture == false or not (o and o.apple_silicon and o.apple_silicon()) then
   return
 end
 

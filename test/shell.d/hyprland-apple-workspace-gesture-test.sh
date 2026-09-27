@@ -19,7 +19,8 @@ chmod +x "$tmpdir"/*-bin/omarchy-hw-apple-silicon
 # its direction or axis, and the refusal is a config error.
 load_config() {
   local platform="$1" edit="${2:-}"
-  local home="$tmpdir/home-$RANDOM$RANDOM"
+  local home
+  home=$(mktemp -d "$tmpdir/home.XXXXXX")
 
   mkdir -p "$home/.config"
   cp -R "$ROOT/config/hypr" "$home/.config/hypr"
@@ -114,7 +115,7 @@ output=$(load_config apple "$shipped_line")
 pass "uncommenting the shipped example does not duplicate the gesture"
 
 focus_lines=$(sed -nE 's/^-- (hl\.gesture\(\{ fingers = 3, direction = "(left|right)".*)$/\1/p' "$ROOT/config/hypr/input.lua")
-[[ $(wc -l <<<"$focus_lines") -eq 2 ]] || fail "input.lua still ships the focus gesture examples" "$focus_lines"
+(( $(wc -l <<<"$focus_lines") == 2 )) || fail "input.lua still ships the focus gesture examples" "$focus_lines"
 output=$(load_config apple "$focus_lines")
 [[ $output == $'3 left function\n3 right function' ]] || fail "three-finger focus gestures replace the workspace swipe" "$output"
 pass "a user's own three-finger sideways gestures replace the default"
