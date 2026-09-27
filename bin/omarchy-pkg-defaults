@@ -12,7 +12,7 @@ if [[ -z $platform ]]; then
 fi
 
 case $platform in
-  apple-silicon) lists=(base aarch64 apple) ;;
+  apple-silicon) lists=(base aarch64 apple-silicon) ;;
   qualcomm) lists=(base aarch64 qualcomm) ;;
   generic-aarch64) lists=(base aarch64) ;;
   generic) lists=(base) ;;

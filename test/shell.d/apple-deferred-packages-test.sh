@@ -69,7 +69,7 @@ pass "the Apple default set carries every package an Apple hardware step install
 # Dropping one of them from the Apple list is caught.
 mkdir -p "$test_tmp/omarchy/install"
 cp "$ROOT"/install/omarchy-{base,aarch64}.packages "$test_tmp/omarchy/install/"
-grep -vx vulkan-asahi "$ROOT/install/omarchy-apple.packages" >"$test_tmp/omarchy/install/omarchy-apple.packages"
+grep -vx vulkan-asahi "$ROOT/install/omarchy-apple-silicon.packages" >"$test_tmp/omarchy/install/omarchy-apple-silicon.packages"
 [[ $(missing_from_defaults "$test_tmp/omarchy") == "install/hardware/vulkan.sh:vulkan-asahi" ]] ||
   fail "a step package dropped from the Apple list is reported" "$(missing_from_defaults "$test_tmp/omarchy")"
 pass "a step package dropped from the Apple list is reported"
