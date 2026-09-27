@@ -253,8 +253,8 @@ run_bootstrap --prime --channel stable >/dev/null 2>&1 || fail "priming for stab
   fail "a chosen channel is kept even when the package names it too" "$(cat "$R/etc/omarchy-mac/migration-target" 2>/dev/null)"
 pass "a channel given with --channel is kept for later runs even when it is the package's own"
 
-# The package the channel it names ships is checked again, and its target
-# decides whether the Mac needs one of its own.
+# When stable's package names another channel, that channel's package is
+# checked again and its target decides whether the Mac needs one of its own.
 new_root
 publish stable 20260926-1 "$(package 20260926-1 rc)"
 publish rc 20260926-2 "$(package 20260926-2 stable)"

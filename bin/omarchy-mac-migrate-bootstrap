@@ -21,6 +21,7 @@
 # is, server= and all; a --channel that disagrees with it is ignored with a
 # warning. Without one the Mac moves to --channel's channel, which that file
 # then keeps for later runs, or else to the channel the package's target names.
+# The package itself always comes from pkgs.omarchy.org's channel of that name.
 #
 # --prime fetches, checks and unpacks the package, and stops there.
 #
