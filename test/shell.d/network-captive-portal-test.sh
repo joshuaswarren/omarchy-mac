@@ -77,24 +77,29 @@ for command in omarchy-dns omarchy-network-band; do
 done
 # Preview uses only synthetic details, never the host's SSID or addresses.
 # Normal assertions keep the details empty to exercise missing-route handling.
-printf '#!/bin/bash\nif [[ ${1:-} == --primary-device ]]; then\n  cat "$NETWORK_TEST_STAGE/primary"\nelif [[ -n ${NETWORK_TEST_PREVIEW:-} ]]; then\n  printf "type\\twifi\\niface\\ttest-wifi\\nssid\\tGuest Wi-Fi\\nip\\t192.0.2.10\\ngateway\\t192.0.2.1\\n"\nfi\n' > "$stage/bin/omarchy-network-status"
+printf '#!/bin/bash\nif [[ ${1:-} == "--primary-device" ]]; then\n  cat "$NETWORK_TEST_STAGE/primary"\nelif [[ -n ${NETWORK_TEST_PREVIEW:-} ]]; then\n  printf "type\\twifi\\niface\\ttest-wifi\\nssid\\tGuest Wi-Fi\\nip\\t192.0.2.10\\ngateway\\t192.0.2.1\\n"\nfi\n' > "$stage/bin/omarchy-network-status"
 chmod +x "$stage/bin/omarchy-network-status"
 # NetworkManager events come from a file the fixture appends to, so it can
 # move the primary connection without touching any Networking property.
 echo test-wifi > "$stage/primary"
 : > "$stage/nm-events"
-# Each monitor reports one event and exits, so the panel must restart it.
+# Each monitor reports one event and exits, so the panel must restart it. The
+# reported count lives in a file so an event written mid-restart still lands.
+echo 0 > "$stage/nm-seen"
 cat > "$stage/bin/nmcli" <<'SH'
 #!/bin/bash
-[[ ${1:-} == monitor ]] || exit 0
-seen=$(wc -l < "$NETWORK_TEST_STAGE/nm-events")
-for _ in {1..300}; do
-  sleep 0.1
-  if (( $(wc -l < "$NETWORK_TEST_STAGE/nm-events") > seen )); then
-    echo "primary connection changed"
-    exit 0
-  fi
-done
+if [[ ${1:-} == "monitor" ]]; then
+  seen=$(<"$NETWORK_TEST_STAGE/nm-seen")
+  for _ in {1..300}; do
+    now=$(wc -l < "$NETWORK_TEST_STAGE/nm-events")
+    if (( now > seen )); then
+      echo "$now" > "$NETWORK_TEST_STAGE/nm-seen"
+      echo "primary connection changed"
+      break
+    fi
+    sleep 0.1
+  done
+fi
 SH
 printf '#!/bin/bash\nprintf "%%s\\n" "$1" > "$NETWORK_TEST_STAGE/primary"\necho "primary connection changed" >> "$NETWORK_TEST_STAGE/nm-events"\n' > "$stage/bin/network-test-primary"
 chmod +x "$stage/bin/nmcli" "$stage/bin/network-test-primary"

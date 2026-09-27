@@ -13,7 +13,7 @@ QtObject {
 
   property var devices: ({ values: [wifi, wired] })
   // A Thunderbolt bridge: NetworkManager reports it connected, but the
-  // internet route stays on Wi-Fi (the runner's route stub prints test-wifi).
+  // primary connection stays on Wi-Fi (the runner's stub starts at test-wifi).
   property QtObject wired: QtObject {
     property int type: DeviceType.Wired
     property string name: "test-wired"

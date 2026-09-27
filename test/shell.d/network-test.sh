@@ -315,7 +315,7 @@ stage=$(mktemp -d)
 trap 'rm -rf -- "$stage"' EXIT
 cat > "$stage/busctl" <<'SH'
 #!/bin/bash
-[[ $1 == get-property && $2 == org.freedesktop.NetworkManager ]] || exit 1
+[[ $1 == "get-property" && $2 == "org.freedesktop.NetworkManager" ]] || exit 1
 case $4 in
   org.freedesktop.NetworkManager) printf 'o "%s"\n' "$NETWORK_TEST_PRIMARY" ;;
   org.freedesktop.NetworkManager.Connection.Active) printf 'ao 1 "/org/freedesktop/NetworkManager/Devices/6"\n' ;;
@@ -325,7 +325,7 @@ esac
 SH
 chmod +x "$stage/busctl"
 primary_device() { NETWORK_TEST_PRIMARY=$1 PATH="$stage:$PATH" "$ROOT/bin/omarchy-network-status" --primary-device; }
-[[ $(primary_device /org/freedesktop/NetworkManager/ActiveConnection/10) == wlan0 ]] || fail "network-status prints the primary connection's interface"
+[[ $(primary_device /org/freedesktop/NetworkManager/ActiveConnection/10) == "wlan0" ]] || fail "network-status prints the primary connection's interface"
 [[ -z $(primary_device /) ]] || fail "network-status prints nothing without a primary connection"
 [[ -z $(PATH="$stage:$PATH" NETWORK_TEST_PRIMARY=x "$ROOT/bin/omarchy-network-status" --primary-device 2>&1) ]] || fail "network-status ignores a malformed primary connection"
 pass "network-status reports NetworkManager's primary device"

@@ -56,15 +56,15 @@ nm_property() {
 }
 
 # NetworkManager's primary connection owns the default route, or reaches the
-# VPN endpoint when a VPN does, so it names the physical link carrying traffic.
+# VPN endpoint when an NM VPN owns it, so it names the link carrying traffic.
 print_primary_device() {
   local connection device
 
   connection=$(nm_property /org/freedesktop/NetworkManager "" PrimaryConnection)
-  [[ $connection == /org/* ]] || return 0
+  [[ $connection == "/org/"* ]] || return 0
 
   device=$(busctl get-property org.freedesktop.NetworkManager "$connection" org.freedesktop.NetworkManager.Connection.Active Devices 2>/dev/null | awk '$1 == "ao" && $2 >= 1 { gsub(/"/, "", $3); print $3 }')
-  [[ $device == /org/* ]] || return 0
+  [[ $device == "/org/"* ]] || return 0
 
   nm_property "$device" .Device Interface
 }
