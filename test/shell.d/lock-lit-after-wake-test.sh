@@ -39,6 +39,13 @@ function makeLock() {
   }
   const state = {
     Date: { now: () => clock.now },
+    dpmsEpoch: 0,
+    monitorDpms: {},
+    blankProcess: { running: false },
+    screenDpmsSettleTimer: { running: false },
+    screenDpmsProcess: { running: false },
+    events: [],
+    logEvent(event) { this.events.push(event) },
     displaysBlank: false,
     monitorDpmsKnown: false,
     lockRequested: true,
@@ -51,12 +58,19 @@ function makeLock() {
   const fns = new Function('state', `with (state) {
     ${extract('armBlankTimer')}
     ${extract('runWake')}
-    return { armBlankTimer, runWake }
+    ${extract('anyMonitorDark')}
+    ${extract('applyMonitorDpms')}
+    ${extract('takeMonitorDpms')}
+    return { armBlankTimer, runWake, takeMonitorDpms }
   }`)(state)
   return {
     state, timer, clock, ...fns,
     after(ms) { clock.now += ms },
-    blank() { timer.running = false; state.displaysBlank = true }
+    blank() { timer.running = false; state.displaysBlank = true; state.dpmsEpoch += 2 },
+    // A poll asked for now, answered with these panels.
+    poll(panels, epoch = state.dpmsEpoch) {
+      fns.takeMonitorDpms(JSON.stringify(panels.map(([name, dpmsStatus]) => ({ name, dpmsStatus, disabled: false }))), epoch)
+    }
   }
 }
 
@@ -94,6 +108,61 @@ lock = makeLock()
 lock.state.lockRequested = false
 lock.runWake()
 assert(!lock.timer.running, 'waking after unlock does not arm a blank')
+
+// The power button is a locked Hyprland bind: it lights the panels and the lock never sees a key.
+lock = makeLock()
+lock.blank()
+lock.after(60000)
+lock.poll([['eDP-1', true], ['USB-2', true]])
+assert(!lock.state.displaysBlank && lock.state.events.includes('woken-behind-lock'), 'panels lit without a key reaching the lock count as a wake')
+assert(lock.timer.dueAt() === lock.clock.now + wakeRunUp, 'a wake the lock did not see gets the wake run-up')
+
+lock = makeLock()
+lock.blank()
+lock.poll([['eDP-1', false], ['USB-2', true]])
+assert(lock.state.displaysBlank && !lock.timer.running, 'one panel lit while another is dark is not a wake')
+
+lock = makeLock()
+lock.blank()
+const staleEpoch = lock.state.dpmsEpoch - 1
+lock.poll([['eDP-1', true]], staleEpoch)
+assert(lock.state.displaysBlank && !lock.timer.running, 'an answer asked for before the blank landed is not a wake')
+
+lock = makeLock()
+lock.blank()
+lock.state.blankProcess.running = true
+lock.poll([['eDP-1', true]])
+assert(lock.state.displaysBlank && !lock.timer.running, 'an answer that races the blank itself is not a wake')
+
+lock = makeLock()
+lock.blank()
+lock.state.screenDpmsSettleTimer.running = true
+lock.poll([['USB-2', true]])
+assert(lock.state.displaysBlank && !lock.timer.running, 'a panel coming back mid-blank is left to the screen-change settle')
+
+lock = makeLock()
+lock.blank()
+lock.poll([])
+assert(lock.state.displaysBlank && !lock.timer.running, 'no enabled panel is not a wake')
+
+lock = makeLock()
+lock.armBlankTimer()
+const due = lock.timer.dueAt()
+lock.poll([['eDP-1', true]])
+assert(lock.timer.dueAt() === due && lock.state.events.length === 0, 'a lit lock polled for its video wallpaper is not woken again')
+
+assert(
+  /id: monitorDpmsTimer[\s\S]*?running: root\.locked && \(root\.videoBackground \|\| root\.displaysBlank\)[\s\S]*?if \(monitorDpmsProcess\.running \|\| blankProcess\.running\) return\s*monitorDpmsProcess\.epoch = root\.dpmsEpoch/.test(service),
+  'a blank lock polls the panels, tagging each answer with the state it was asked in'
+)
+
+assert(
+  /id: blankProcess[\s\S]*?onExited: root\.dpmsEpoch \+= 1/.test(service) &&
+    /function runBlank\(\) \{\s*root\.dpmsEpoch \+= 1/.test(service) &&
+    /function runWake\([^)]*\) \{[\s\S]*?root\.dpmsEpoch \+= 1/.test(service) &&
+    /onStreamFinished: root\.takeMonitorDpms\(text, monitorDpmsProcess\.epoch\)/.test(service),
+  'answers asked for before a blank or wake finished are dropped'
+)
 
 assert(
   /id: resumeWatchTimer[\s\S]*?onRunningChanged: lastTick = running \? Date\.now\(\) : 0/.test(service),

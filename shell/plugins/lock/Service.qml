@@ -43,6 +43,9 @@ Item {
   // (a resume that kept the same outputs) resumes instead of freezing.
   property var monitorDpms: ({})
   property bool monitorDpmsKnown: false
+  // Bumped by every wake and blank, so a DPMS answer asked for before one of
+  // them is dropped instead of undoing it.
+  property int dpmsEpoch: 0
   // Hyprland lights every panel for a key when any one is dark, so the key that
   // does it is a wake key whichever panel's lock surface holds keyboard focus.
   readonly property bool anyDisplayBlank: displaysBlank && (!monitorDpmsKnown || anyMonitorDark(monitorDpms))
@@ -189,6 +192,7 @@ Item {
 
   function runWake(runUp) {
     var fromBlank = root.displaysBlank
+    root.dpmsEpoch += 1
     root.displaysBlank = false
     root.monitorDpmsKnown = false
     if (!wakeProcess.running) wakeProcess.running = true
@@ -196,6 +200,7 @@ Item {
   }
 
   function runBlank() {
+    root.dpmsEpoch += 1
     root.displaysBlank = true
     root.monitorDpmsKnown = false
     if (!blankProcess.running) blankProcess.running = true
@@ -231,6 +236,21 @@ Item {
     monitorDpms = dpms
     monitorDpmsKnown = true
     return true
+  }
+
+  // Hyprland lights the panels for input that never reaches the lock: the power
+  // button is a locked bind, and a lid can come back without a suspend. Every
+  // enabled panel lit while the lock thinks it is blank is such a wake, and gets
+  // the same run-up as a key.
+  function takeMonitorDpms(text, epoch) {
+    if (epoch !== dpmsEpoch || blankProcess.running) return
+    // A panel coming back mid-blank is the screen-change settle's to judge.
+    if (screenDpmsSettleTimer.running || screenDpmsProcess.running) return
+    if (!applyMonitorDpms(text)) return
+    if (!displaysBlank || !lockRequested) return
+    if (Object.keys(monitorDpms).length === 0 || anyMonitorDark(monitorDpms)) return
+    logEvent("woken-behind-lock")
+    runWake(wakeRunUp)
   }
 
   // Give up the blank state only once no panel is dark. An answer that cannot be
@@ -483,16 +503,19 @@ Item {
   Process {
     id: blankProcess
     command: ["bash", "-c", "omarchy-brightness-keyboard off; omarchy-brightness-display off"]
+    onExited: root.dpmsEpoch += 1
   }
 
   // Quickshell exposes no DPMS signal, so the panel state is polled while a
-  // video is the locked wallpaper. A wake or blank request drops the last
-  // answer, so its optimistic state applies until the next poll confirms it.
+  // video is the locked wallpaper, and while the lock is blank to notice a wake
+  // it did not see. A wake or blank request drops the last answer, so its
+  // optimistic state applies until the next poll confirms it.
   Process {
     id: monitorDpmsProcess
+    property int epoch: 0
     command: ["hyprctl", "monitors", "-j"]
     stdout: StdioCollector {
-      onStreamFinished: root.applyMonitorDpms(text)
+      onStreamFinished: root.takeMonitorDpms(text, monitorDpmsProcess.epoch)
     }
   }
 
@@ -501,9 +524,11 @@ Item {
     interval: 3000
     repeat: true
     triggeredOnStart: true
-    running: root.locked && root.videoBackground
+    running: root.locked && (root.videoBackground || root.displaysBlank)
     onTriggered: {
-      if (!monitorDpmsProcess.running) monitorDpmsProcess.running = true
+      if (monitorDpmsProcess.running || blankProcess.running) return
+      monitorDpmsProcess.epoch = root.dpmsEpoch
+      monitorDpmsProcess.running = true
     }
     onRunningChanged: {
       if (!running) root.monitorDpmsKnown = false
