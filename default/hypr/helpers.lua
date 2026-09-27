@@ -240,21 +240,27 @@ local function holds_modifier(mods)
 end
 
 -- Hyprland rejects a gesture another one already covers, and gives Lua no way
--- to list what's registered. On a Mac, record each one so the default workspace
--- swipe, added after the user's files, can step aside for the user's own.
-if hl and hl.gesture and not o.registered_gestures and o.apple_silicon() then
-  local register_gesture = hl.gesture
+-- to list what's registered. Record each one, so a platform's default gesture,
+-- added after the user's files, can step aside for the user's own. The list
+-- starts empty on every load, and hl.gesture is wrapped once whether or not a
+-- reload keeps the Lua state.
+if hl and hl.gesture then
   o.registered_gestures = {}
 
-  hl.gesture = function(gesture, ...)
-    if type(gesture) == "table" then
-      table.insert(o.registered_gestures, {
-        fingers = tonumber(gesture.fingers),
-        direction = type(gesture.direction) == "string" and gesture.direction:lower() or "",
-        modified = holds_modifier(gesture.mods),
-      })
-    end
+  if hl.gesture ~= o.gesture_wrapper then
+    local register_gesture = hl.gesture
 
-    return register_gesture(gesture, ...)
+    o.gesture_wrapper = function(gesture, ...)
+      if type(gesture) == "table" then
+        table.insert(o.registered_gestures, {
+          fingers = tonumber(gesture.fingers),
+          direction = type(gesture.direction) == "string" and gesture.direction:lower() or "",
+          modified = holds_modifier(gesture.mods),
+        })
+      end
+
+      return register_gesture(gesture, ...)
+    end
+    hl.gesture = o.gesture_wrapper
   end
 end

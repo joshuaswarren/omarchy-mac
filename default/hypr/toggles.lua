@@ -21,4 +21,10 @@ disabled_input_device("touchpad")
 disabled_input_device("touchscreen")
 
 require("default.hypr.workspace-layouts")
-require("default.hypr.apple-gestures")
+
+-- A platform package's own defaults, loaded after the user's files so that the
+-- user's settings can keep them out. They are read from the packaged tree, so a
+-- development checkout keeps them.
+local platform_dir = paths.packaged_path .. "/default/hypr/platform"
+package.path = platform_dir .. "/?.lua;" .. package.path
+require_all.files(platform_dir, nil, { reload = true })
