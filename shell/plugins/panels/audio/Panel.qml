@@ -172,12 +172,11 @@ Panel {
   readonly property bool inputLevelKnown: !inputViaWpctl || mappedInput.known
   readonly property real inputVolume: inputViaWpctl ? mappedInput.volume : (source && source.audio ? source.audio.volume : 0)
   readonly property bool inputMuted: inputViaWpctl ? mappedInput.muted : (source && source.audio ? source.audio.muted : false)
-  readonly property var inputPeakNode: {
-    if (!inputViaWpctl) return source
-    for (var i = 0; i < nodes.length; i++)
-      if (nodes[i] && nodes[i].audio && Model.isAsahiDspMic(nodes[i].name)) return nodes[i]
-    return null
-  }
+  // Quickshell cannot meter this source (it is untyped, and its peak stream on
+  // the mono DSP source negotiates stereo and drops every buffer), so the
+  // omarchy-mac helper records the mapping and prints its level.
+  readonly property var inputPeakNode: inputViaWpctl ? null : source
+  property real mappedInputPeak: 0
 
   onRawAudioSinksChanged: if (rawAudioSinks.length > 0) cachedAudioSinks = rawAudioSinks
   onRawAudioSourcesChanged: if (rawAudioSources.length > 0) cachedAudioSources = rawAudioSources
@@ -618,12 +617,19 @@ Panel {
   PwObjectTracker { objects: root.candidateSources }
   PwObjectTracker { objects: root.audioStreams }
 
-  PwObjectTracker { objects: root.inputViaWpctl && root.inputPeakNode ? [root.inputPeakNode] : [] }
-
   PwNodePeakMonitor {
     id: inputPeakMonitor
     node: root.inputPeakNode
     enabled: root.opened && !!root.inputPeakNode
+  }
+
+  Process {
+    running: root.opened && root.inputViaWpctl
+    command: ["omarchy-audio-asahi-mic-level"]
+    stdout: SplitParser {
+      onRead: function(line) { root.mappedInputPeak = Math.max(0, Math.min(1, parseFloat(line) || 0)) }
+    }
+    onRunningChanged: if (!running) root.mappedInputPeak = 0
   }
 
   WpctlNodeLevel {
@@ -1003,7 +1009,7 @@ Panel {
 
                   Rectangle {
                     height: parent.height
-                    width: root.inputViaWpctl && root.inputMuted ? 0 : parent.width * Math.max(0, Math.min(1, inputPeakMonitor.peak))
+                    width: parent.width * Math.max(0, Math.min(1, root.inputViaWpctl ? root.mappedInputPeak : inputPeakMonitor.peak))
                     color: root.bar.foreground
                     Behavior on width { NumberAnimation { duration: 70 } }
                   }
