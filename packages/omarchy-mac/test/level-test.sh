@@ -19,7 +19,8 @@ out.write(struct.pack('<%df' % n, *([0.0] * (n - 1) + [1.5])))
 out.flush()"
 exec sleep 30
 SH
-chmod +x "$work/bin/parec"
+printf '#!/bin/bash\nexit 0\n' >"$work/bin/omarchy-hw-apple-silicon"
+chmod +x "$work/bin/parec" "$work/bin/omarchy-hw-apple-silicon"
 export ARGS="$work/args" PIDFILE="$work/pid"
 PATH="$work/bin:$PATH" python3 "$ROOT/bin/omarchy-audio-asahi-mic-level" >"$work/out" &
 helper=$!

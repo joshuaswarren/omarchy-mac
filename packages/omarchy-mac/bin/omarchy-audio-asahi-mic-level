@@ -41,6 +41,8 @@ def die_with(parent):
 
 
 def main():
+    if subprocess.run(['omarchy-hw-apple-silicon']).returncode:
+        return 0
     source = sys.argv[1] if len(sys.argv) > 1 else 'omarchy_asahi_mic'
     try:
         process = subprocess.Popen(['parec', '--device=' + source, '--raw', '--format=float32le', '--channels=1',
