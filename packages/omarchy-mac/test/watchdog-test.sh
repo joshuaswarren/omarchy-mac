@@ -265,8 +265,11 @@ for locked, status, expected in ((1, free, None), (0, free, 'the screen is locke
     with mock.patch.object(w.System, 'run', answers(locked, status)):
         assert system.lock_state() == expected, (locked, status)
 with mock.patch.dict(os.environ, {'OMARCHY_PATH': '/usr/share/omarchy'}):
-    for listings, result, kills in ((['[]'], 'none', 0), (['[{}]', '[{}, {}]', '[{}]', '[]'], 'stopped', 3),
-                                    (['[{}]'] * 11, 'failed', 10), ([None], 'unknown', 0), (['{}'], 'unknown', 0)):
+    # What Quickshell 0.3.1 prints for `list -j` when no instance runs.
+    none = 'No running instances for "/usr/share/omarchy/shell/shell.qml"\nUse --all to list all instances.'
+    for listings, result, kills in (([none], 'none', 0), (['[{}]', '[{}, {}]', '[{}]', none], 'stopped', 3),
+                                    (['[]'], 'none', 0), (['[{}]'] * 11, 'failed', 10), ([None], 'unknown', 0),
+                                    (['{}'], 'unknown', 0), (['garbage'], 'unknown', 0)):
         replies = iter(listings)
         calls = []
         def run(self, *args, timeout=10, env=None):
