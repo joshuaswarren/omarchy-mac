@@ -136,6 +136,12 @@ assert(lock.state.displaysBlank && !lock.timer.running, 'an answer that races th
 
 lock = makeLock()
 lock.blank()
+lock.state.wakeProcess.running = true
+lock.poll([['eDP-1', true]])
+assert(lock.state.displaysBlank && !lock.timer.running, 'an answer that races a wake is left to that wake')
+
+lock = makeLock()
+lock.blank()
 lock.state.screenDpmsSettleTimer.running = true
 lock.poll([['USB-2', true]])
 assert(lock.state.displaysBlank && !lock.timer.running, 'a panel coming back mid-blank is left to the screen-change settle')
@@ -152,12 +158,13 @@ lock.poll([['eDP-1', true]])
 assert(lock.timer.dueAt() === due && lock.state.events.length === 0, 'a lit lock polled for its video wallpaper is not woken again')
 
 assert(
-  /id: monitorDpmsTimer[\s\S]*?running: root\.locked && \(root\.videoBackground \|\| root\.displaysBlank\)[\s\S]*?if \(monitorDpmsProcess\.running \|\| blankProcess\.running\) return\s*monitorDpmsProcess\.epoch = root\.dpmsEpoch/.test(service),
+  /id: monitorDpmsTimer[\s\S]*?running: root\.locked && \(root\.videoBackground \|\| root\.displaysBlank\)[\s\S]*?if \(monitorDpmsProcess\.running \|\| blankProcess\.running \|\| wakeProcess\.running\) return\s*monitorDpmsProcess\.epoch = root\.dpmsEpoch/.test(service),
   'a blank lock polls the panels, tagging each answer with the state it was asked in'
 )
 
 assert(
   /id: blankProcess[\s\S]*?onExited: root\.dpmsEpoch \+= 1/.test(service) &&
+    /id: wakeProcess[\s\S]*?onExited: root\.dpmsEpoch \+= 1/.test(service) &&
     /function runBlank\(\) \{\s*root\.dpmsEpoch \+= 1/.test(service) &&
     /function runWake\([^)]*\) \{[\s\S]*?root\.dpmsEpoch \+= 1/.test(service) &&
     /onStreamFinished: root\.takeMonitorDpms\(text, monitorDpmsProcess\.epoch\)/.test(service),

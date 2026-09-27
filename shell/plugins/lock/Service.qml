@@ -238,12 +238,11 @@ Item {
     return true
   }
 
-  // Hyprland lights the panels for input that never reaches the lock: the power
-  // button is a locked bind, and a lid can come back without a suspend. Every
-  // enabled panel lit while the lock thinks it is blank is such a wake, and gets
-  // the same run-up as a key.
+  // Hyprland lights the panels for input that never reaches the lock, such as
+  // the power button, which is a locked bind. Every enabled panel lit while the
+  // lock thinks it is blank is such a wake, and gets the same run-up as a key.
   function takeMonitorDpms(text, epoch) {
-    if (epoch !== dpmsEpoch || blankProcess.running) return
+    if (epoch !== dpmsEpoch || blankProcess.running || wakeProcess.running) return
     // A panel coming back mid-blank is the screen-change settle's to judge.
     if (screenDpmsSettleTimer.running || screenDpmsProcess.running) return
     if (!applyMonitorDpms(text)) return
@@ -498,6 +497,7 @@ Item {
   Process {
     id: wakeProcess
     command: ["bash", "-c", "omarchy-system-wake"]
+    onExited: root.dpmsEpoch += 1
   }
 
   Process {
@@ -521,12 +521,13 @@ Item {
 
   Timer {
     id: monitorDpmsTimer
-    interval: 3000
+    // Nothing re-blanks before a wake is noticed, so a still wallpaper can wait longer.
+    interval: root.videoBackground ? 3000 : 5000
     repeat: true
     triggeredOnStart: true
     running: root.locked && (root.videoBackground || root.displaysBlank)
     onTriggered: {
-      if (monitorDpmsProcess.running || blankProcess.running) return
+      if (monitorDpmsProcess.running || blankProcess.running || wakeProcess.running) return
       monitorDpmsProcess.epoch = root.dpmsEpoch
       monitorDpmsProcess.running = true
     }
