@@ -78,13 +78,6 @@ hl.config({
 hl.device({ name = "apple-mtp-multi-touch", tap_to_click = false })
 hl.device({ name = "apple-spi-trackpad", tap_to_click = false })
 
--- The Mac workspace swipe (apple-gestures.lua) steps by number, so it reaches
--- empty workspaces as Spaces do in macOS. Hyprland's default steps only through
--- workspaces that exist and never out of an empty one into a new one.
-if o.apple_silicon and o.apple_silicon() then
-  hl.config({ gestures = { workspace_swipe_use_r = true } })
-end
-
 -- Scroll nicely in the terminal.
 o.window("(Alacritty|kitty)", { scroll_touchpad = 1.5 })
 -- foot only applies its scrollback multiplier to wheel clicks, not precise touchpad scrolling.

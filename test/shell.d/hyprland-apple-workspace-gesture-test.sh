@@ -152,10 +152,12 @@ pass "omarchy_workspace_gesture = false turns the default off"
   fail "a Mac swipe steps by number, into empty workspaces" "$(SHOW_USE_R=1 load_config apple)"
 [[ $(SHOW_USE_R=1 load_config other) == "workspace_swipe_use_r false" ]] ||
   fail "x86 and Snapdragon keep Hyprland's own workspace stepping" "$(SHOW_USE_R=1 load_config other)"
-output=$(SHOW_USE_R=1 load_config apple 'hl.config({ gestures = { workspace_swipe_use_r = false } })')
+output=$(SHOW_USE_R=1 load_config apple "$shipped_line")
 [[ $output == "$swipe"$'\nworkspace_swipe_use_r false' ]] ||
-  fail "a user's workspace_swipe_use_r = false in input.lua wins" "$output"
-pass "Macs swipe into empty workspaces unless the user sets workspace_swipe_use_r"
+  fail "a user's own workspace gesture keeps Hyprland's stepping" "$output"
+output=$(SHOW_USE_R=1 load_config apple 'omarchy_workspace_gesture = false')
+[[ $output == "workspace_swipe_use_r false" ]] || fail "turning the Mac gesture off keeps Hyprland's stepping" "$output"
+pass "the Mac swipe steps into empty workspaces; a user's own gesture keeps Hyprland's stepping"
 
 grep -Fq 'omarchy_workspace_gesture = false' "$ROOT/mac-manual/content/06-keyboard.md" ||
   fail "the manual documents how to turn the Mac gesture off"

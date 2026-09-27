@@ -24,4 +24,8 @@ for _, gesture in ipairs(o.registered_gestures or {}) do
   end
 end
 
+-- Step by number, so the swipe reaches empty workspaces as Spaces do in macOS.
+-- Hyprland's default steps only through workspaces that exist and never out of
+-- an empty one into a new one. A user's own gesture keeps Hyprland's stepping.
+hl.config({ gestures = { workspace_swipe_use_r = true } })
 hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
