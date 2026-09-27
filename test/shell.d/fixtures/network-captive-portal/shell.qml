@@ -124,6 +124,67 @@ ShellRoot {
   function disconnectedChecks() {
     check(panel.kind === "disconnected" && !panel.hasCaptivePortal, "disconnect clears stale portal")
     check(!panel.testButton.visible && panel.icon === "󰤮", "disconnected icon not portal icon")
+    NetworkMock.network.connected = true
+    NetworkMock.wifi.connected = true
+    bridgeStart.start()
+  }
+
+  // Wait out the startup lookup, then forget it so only the Thunderbolt link
+  // coming up can refill the primary device.
+  Timer {
+    id: bridgeStart
+    interval: 1500
+    onTriggered: {
+      test.check(panel.primaryDevice === "test-wifi", "startup lookup reports the Wi-Fi interface")
+      panel.primaryDevice = ""
+      NetworkMock.wired.connected = true
+      bridgeSettle.start()
+    }
+  }
+  Timer { id: bridgeSettle; interval: 1500; onTriggered: test.bridgeChecks() }
+
+  function bridgeChecks() {
+    check(panel.primaryDevice === "test-wifi", "a device change repeats the primary lookup")
+    check(panel.kind === "wifi" && panel.icon !== "󰈀" && panel.icon !== "󰈂", "a wired link that is not primary leaves the Wi-Fi icon")
+    // Only a NetworkManager event announces this move; no device changes.
+    Quickshell.execDetached(["network-test-primary", "test-wired"])
+    waitFor(function() { return panel.kind === "ethernet" }, "a NetworkManager event moves the bar to a primary wired link", function() {
+      waitFor(function() { return panel.testNmMonitor.running }, "the NetworkManager monitor restarts after it exits", function() {
+        Quickshell.execDetached(["network-test-primary", "test-wifi"])
+        waitFor(function() { return panel.kind === "wifi" }, "a NetworkManager event moves the bar back to Wi-Fi", function() {
+          NetworkMock.wired.connected = false
+          finish()
+        })
+      })
+    })
+  }
+
+  property var waitCondition: null
+  property string waitMessage: ""
+  property var waitNext: null
+  function waitFor(condition, message, next) {
+    waitCondition = condition
+    waitMessage = message
+    waitNext = next
+    waitPoll.tries = 0
+    waitPoll.start()
+  }
+  Timer {
+    id: waitPoll
+    property int tries: 0
+    interval: 250
+    repeat: true
+    onTriggered: {
+      if (!test.waitCondition()) {
+        if (++tries < 40) return
+        test.check(false, test.waitMessage)
+      }
+      stop()
+      test.waitNext()
+    }
+  }
+
+  function finish() {
     if (failed) { Qt.quit(); return }
     console.log("RESULT pass")
     var preview = Quickshell.env("NETWORK_TEST_PREVIEW")

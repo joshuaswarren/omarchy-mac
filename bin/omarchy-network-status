@@ -2,19 +2,22 @@
 
 # omarchy:summary=Print active network status for the shell
 # omarchy:group=network
-# omarchy:args=[--verbose]
+# omarchy:args=[--verbose|--primary-device]
 
-verbose=false
+mode=status
 internet_probe=1.1.1.1
 
 case "${1:-}" in
   "")
     ;;
   --verbose)
-    verbose=true
+    mode=verbose
+    ;;
+  --primary-device)
+    mode=primary-device
     ;;
   *)
-    echo "Usage: omarchy-network-status [--verbose]" >&2
+    echo "Usage: omarchy-network-status [--verbose|--primary-device]" >&2
     exit 2
     ;;
 esac
@@ -46,6 +49,24 @@ print_status() {
   fi
 
   printf 'wifi\t%s\t%s\t%s\n' "${ssid:-$device}" "$signal" "$freq"
+}
+
+nm_property() {
+  busctl get-property org.freedesktop.NetworkManager "$1" "org.freedesktop.NetworkManager$2" "$3" 2>/dev/null | awk '{ gsub(/"/, "", $NF); print $NF }'
+}
+
+# NetworkManager's primary connection owns the default route, or reaches the
+# VPN endpoint when an NM VPN owns it, so it names the link carrying traffic.
+print_primary_device() {
+  local connection device
+
+  connection=$(nm_property /org/freedesktop/NetworkManager "" PrimaryConnection)
+  [[ $connection == "/org/"* ]] || return 0
+
+  device=$(busctl get-property org.freedesktop.NetworkManager "$connection" org.freedesktop.NetworkManager.Connection.Active Devices 2>/dev/null | awk '$1 == "ao" && $2 >= 1 { gsub(/"/, "", $3); print $3 }')
+  [[ $device == "/org/"* ]] || return 0
+
+  nm_property "$device" .Device Interface
 }
 
 ping_latency_ms() {
@@ -130,8 +151,8 @@ print_verbose() {
   print_ping_samples "$gw"
 }
 
-if [[ $verbose == "true" ]]; then
-  print_verbose
-else
-  print_status
-fi
+case $mode in
+  verbose) print_verbose ;;
+  primary-device) print_primary_device ;;
+  *) print_status ;;
+esac

@@ -436,13 +436,21 @@ Panel {
 
   // Bar pill state, derived from the native NetworkManager service so the
   // icon reflects connection changes without polling. Wired is preferred
-  // when both are up, matching the default-route device.
+  // when both are up unless NetworkManager's primary connection is Wi-Fi.
   readonly property var wiredDevice: findDevice(DeviceType.Wired)
-  readonly property string kind: {
-    if (wiredDevice && wiredDevice.connected) return "ethernet"
-    if (connectedWifiNetwork) return "wifi"
-    return "disconnected"
+  readonly property string kind: Model.barKind(!!(wiredDevice && wiredDevice.connected),
+    !!connectedWifiNetwork, primaryDevice, wifiDevice ? wifiDevice.name : "")
+  property string primaryDevice: ""
+  readonly property string primaryKey: {
+    var parts = [Networking.connectivity]
+    var devices = networkDevices || []
+    for (var i = 0; i < devices.length; i++) {
+      var device = devices[i]
+      if (device) parts.push(device.name + ":" + device.connected + ":" + device.hasLink)
+    }
+    return parts.join(" ")
   }
+  onPrimaryKeyChanged: primaryCheck.restart()
   readonly property int signalStrength: connectedWifiNetwork
     ? Math.round((connectedWifiNetwork.signalStrength || 0) * 100)
     : -1
@@ -859,7 +867,54 @@ Panel {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  Component.onCompleted: refresh()
+  Component.onCompleted: {
+    refresh()
+    primaryCheck.restart()
+    startNmMonitor()
+  }
+
+  // Let NetworkManager settle before asking which link is primary; a lookup
+  // still running retries after it finishes.
+  Timer {
+    id: primaryCheck
+    interval: 500
+    repeat: false
+    onTriggered: {
+      if (primaryProc.running) restart()
+      else primaryProc.running = true
+    }
+  }
+
+  Process {
+    id: primaryProc
+    command: ["omarchy-network-status", "--primary-device"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.primaryDevice = text.trim()
+    }
+  }
+
+  // The primary connection can move with every device still connected (a
+  // metric or never-default change), which no Networking property reports.
+  Process {
+    id: nmMonitor
+    command: ["nmcli", "monitor"]
+    stdout: SplitParser { onRead: function(line) { primaryCheck.restart() } }
+    onExited: nmMonitorRestart.start()
+  }
+
+  Timer {
+    id: nmMonitorRestart
+    interval: 5000
+    repeat: false
+    onTriggered: root.startNmMonitor()
+  }
+
+  function startNmMonitor() {
+    if (networkManagerAvailable && !nmMonitor.running && !nmMonitorRestart.running) nmMonitor.running = true
+  }
+
+  onNetworkManagerAvailableChanged: startNmMonitor()
 
   // Pulls everything we want about the active route's interface in one shot.
   Process {

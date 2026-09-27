@@ -11,7 +11,15 @@ QtObject {
   property int checks: 0
   function checkConnectivity() { checks++ }
 
-  property var devices: ({ values: [wifi] })
+  property var devices: ({ values: [wifi, wired] })
+  // A Thunderbolt bridge: NetworkManager reports it connected, but the
+  // primary connection stays on Wi-Fi (the runner's stub starts at test-wifi).
+  property QtObject wired: QtObject {
+    property int type: DeviceType.Wired
+    property string name: "test-wired"
+    property bool connected: false
+    property bool hasLink: true
+  }
   property QtObject wifi: QtObject {
     property int type: DeviceType.Wifi
     property string name: "test-wifi"
