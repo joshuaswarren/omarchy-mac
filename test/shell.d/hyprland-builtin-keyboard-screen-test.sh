@@ -57,9 +57,11 @@ o.preinstalled_bindings_enabled = function()
 end
 dofile(root .. "/default/hypr/bindings/applications.lua")
 dofile(root .. "/default/hypr/bindings/utilities.lua")
+dofile(root .. "/default/hypr/bindings/clipboard.lua")
 dofile(root .. "/default/hypr/bindings/tiling.lua")
 o.bind("SUPER + F9", "Power menu (locked)", "omarchy-menu toggle system", { locked = true })
 o.rebind("SUPER + SHIFT + F", "File manager", { launch = "flea" })
+o.rebind("SUPER + ESCAPE", "System menu", "omarchy-menu toggle system")
 assert(probes <= 2, "hardware probe runs once per config load, not per bind (" .. probes .. ")")
 LUA
 }
@@ -78,25 +80,45 @@ expect_focus_then() {
 
 expect_focus_then "SUPER + SPACE" "omarchy-menu toggle"
 expect_focus_then "SUPER + ALT + SPACE" "omarchy-menu toggle apps"
-expect_focus_then "SUPER + CTRL + E" "omarchy-shell shell toggle omarchy.emojis"
+expect_focus_then "SUPER + ESCAPE" "omarchy-menu toggle system"
 expect_focus_then "SUPER + K" "omarchy-menu-keybindings"
-expect_focus_then "SUPER + CTRL + Q" "omacalc"
-expect_focus_then "SUPER + RETURN" "omarchy-launch-terminal"
-expect_focus_then "SUPER + SHIFT + A" "omarchy-launch-webapp 'https://chatgpt.com'"
-expect_focus_then "SUPER + SHIFT + ALT + M" "omarchy-launch-or-focus-tui 'cliamp'"
-expect_focus_then "SUPER + SHIFT + W" "uwsm-app -- omawrite"
+expect_focus_then "SUPER + CTRL + A" "omarchy-shell shell toggle omarchy.audio"
+expect_focus_then "SUPER + CTRL + W" "omarchy-shell shell toggle omarchy.network"
 expect_focus_then "SUPER + CTRL + code:10" "omarchy-shell -q shell togglePanelAt right 1"
-expect_focus_then "SUPER + SHIFT + CTRL + A" "omarchy-agent --pick"
-pass "launchers typed on the MacBook keyboard focus the built-in screen first"
+pass "menus and panels typed on the MacBook keyboard focus the built-in screen first"
 
-[[ $apple == *$'unbind\tSUPER + SHIFT + F\nSUPER + SHIFT + F\tfocus '"$keyboards"$'\nSUPER + SHIFT + F\tuwsm-app -- flea'* ]] ||
-  fail "rebinding a launcher keeps the built-in screen focus" "$apple"
-pass "rebinding a launcher keeps the built-in screen focus"
+expect_no_focus() {
+  local keys="$1" command="$2"
 
-for keys in "SUPER + F9" "SUPER + BACKSPACE" "SUPER + CTRL + N" "PRINT" "ALT + PRINT" "SUPER + F12" "SUPER + LEFT" "SUPER + 1"; do
-  grep -qxF "$keys"$'\tfocus '"$keyboards" <<<"$apple" && fail "$keys is not a launcher and keeps today's focus" "$apple"
+  grep -qxF "$keys"$'\t'"$command" <<<"$apple" || fail "$keys still binds $command" "$apple"
+  grep -qxF "$keys"$'\tfocus '"$keyboards" <<<"$apple" && fail "$keys opens on the focused screen" "$apple"
+  return 0
+}
+
+expect_no_focus "SUPER + RETURN" "omarchy-launch-terminal"
+expect_no_focus "SUPER + SHIFT + RETURN" "omarchy-launch-browser"
+expect_no_focus "SUPER + SHIFT + A" "omarchy-launch-webapp 'https://chatgpt.com'"
+expect_no_focus "SUPER + SHIFT + ALT + M" "omarchy-launch-or-focus-tui 'cliamp'"
+expect_no_focus "SUPER + SHIFT + W" "uwsm-app -- omawrite"
+expect_no_focus "SUPER + CTRL + T" "omarchy-launch-tui 'btop'"
+expect_no_focus "SUPER + CTRL + Q" "omacalc"
+expect_no_focus "SUPER + SHIFT + CTRL + A" "omarchy-agent --pick"
+pass "apps open on the focused screen from any keyboard"
+
+expect_no_focus "SUPER + CTRL + E" "omarchy-shell shell toggle omarchy.emojis"
+expect_no_focus "SUPER + CTRL + V" "omarchy-shell shell toggle omarchy.clipboard"
+pass "pickers that paste into the focused window stay on its screen"
+
+[[ $apple == *$'unbind\tSUPER + ESCAPE\nSUPER + ESCAPE\tfocus '"$keyboards"$'\nSUPER + ESCAPE\tomarchy-menu toggle system'* ]] ||
+  fail "rebinding a menu keeps the built-in screen focus" "$apple"
+[[ $apple == *$'unbind\tSUPER + SHIFT + F\nSUPER + SHIFT + F\tuwsm-app -- flea'* ]] ||
+  fail "rebinding an app opens it on the focused screen" "$apple"
+pass "rebinding keeps the menu and app split"
+
+for keys in "SUPER + F9" "SUPER + BACKSPACE" "SUPER + CTRL + N" "PRINT" "ALT + PRINT" "SUPER + F12" "SUPER + LEFT" "SUPER + 1" "SUPER + SHIFT + ALT + comma"; do
+  grep -qxF "$keys"$'\tfocus '"$keyboards" <<<"$apple" && fail "$keys is not a menu and keeps today's focus" "$apple"
 done
-pass "toggles, captures, locked and tiling binds keep today's focus"
+pass "toggles, captures, notifications, locked and tiling binds keep today's focus"
 
 grep -q $'\tfocus ' <<<"$other" && fail "no keyboard-scoped binds off Apple Silicon" "$other"
 grep -qxF $'SUPER + SPACE\tomarchy-menu toggle' <<<"$other" || fail "off Apple Silicon the launchers still bind" "$other"

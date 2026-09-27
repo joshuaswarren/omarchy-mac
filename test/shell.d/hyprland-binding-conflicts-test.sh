@@ -183,15 +183,17 @@ pass "allowed duplicate chords are still stacked on purpose"
   fail "release bindings keep their own signature"
 pass "press and release bindings on one key do not read as a conflict"
 
-# On Apple Silicon a launcher also gets a bind scoped to the built-in keyboard
-# that runs ahead of it. It adds to the launcher rather than competing with it.
+# On Apple Silicon a menu also gets a bind scoped to the built-in keyboard that
+# runs ahead of it. It adds to the menu rather than competing with it.
 apple_bin="$tmpdir/apple-bin"
 mkdir -p "$apple_bin"
 printf '#!/bin/bash\nexit 0\n' >"$apple_bin/omarchy-hw-apple-silicon"
 chmod +x "$apple_bin/omarchy-hw-apple-silicon"
 apple_bindings=$(PATH="$apple_bin:$stub_bin:$PATH" list_bindings "$home")
 grep -q $'^SUPER+SPACE (apple-spi-keyboard,apple-mtp-keyboard)\t' <<<"$apple_bindings" ||
-  fail "Apple Silicon launchers carry a built-in keyboard bind" "$apple_bindings"
+  fail "Apple Silicon menus carry a built-in keyboard bind" "$apple_bindings"
+grep -q $'^SUPER+RETURN (apple-spi-keyboard,apple-mtp-keyboard)\t' <<<"$apple_bindings" &&
+  fail "Apple Silicon apps carry no built-in keyboard bind" "$apple_bindings"
 while read -r signature; do
   [[ -n $signature ]] || continue
   is_allowed_duplicate "$signature" && continue
