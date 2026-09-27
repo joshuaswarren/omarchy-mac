@@ -24,7 +24,8 @@ SINK = 'omarchy_asahi_mic'
 MONITOR = SINK + '.monitor'
 OWNER = 'omarchy.asahi-mic.owner'
 DSP = re.compile(r'effect_output\.j[0-9]+-mic')
-outage = dict(active=False)
+OUTAGE_GRACE = 10.0
+outage = dict(since=None, notified=False)
 
 
 class Deferred(Exception):
@@ -212,27 +213,45 @@ def fallback_path(state):
     return state.with_suffix('.fallback')
 
 
+def claim(state):
+    path = fallback_path(state)
+    return path.read_text() if path.exists() else None
+
+
 def leave_mapping(audio, state, sources, original_input, original_output):
     # The array's DSP is gone (#99: WirePlumber left its filter half-built), so
     # the mapping carries silence. Its sink must not stay the default output,
     # nor its monitor the default input. WirePlumber would fall back to another
-    # monitor, so hand capture to a plugged-in real input, and remember that so
-    # the mapping is selected again when the array returns, unless the user
-    # chooses something else meanwhile. A muted mapping is the user's mute:
-    # never hand it to an unmuted microphone.
-    fallback = fallback_path(state)
-    if fallback.exists() and fallback.read_text() != original_input:
-        fallback.unlink()
+    # monitor, so hand capture to a plugged-in real input, and claim that
+    # choice so the mapping is selected again when the array returns. Choosing
+    # another real input ends the claim; losing the claimed one (unplugged)
+    # hands over again. A muted mapping is the user's mute: never hand it to
+    # an unmuted microphone.
+    claimed = claim(state)
+    inputs = real_inputs(sources)
+    if claimed and original_input != claimed and original_input in inputs:
+        fallback_path(state).unlink()
+        claimed = None
     if original_output == SINK:
         restore_output(audio, None)
-    inputs = real_inputs(sources)
-    audible_mapping = all(any(obj['name'] == name and audible(obj) for obj in objects)
-                          for objects, name in ((audio.objects('sinks'), SINK), (sources, MONITOR)))
-    if original_input == MONITOR and inputs and audible_mapping and audio.run('pactl', 'get-default-source') == MONITOR:
+    if original_input == MONITOR:
+        eligible = all(any(obj['name'] == name and audible(obj) for obj in objects)
+                       for objects, name in ((audio.objects('sinks'), SINK), (sources, MONITOR)))
+    else:
+        eligible = claimed is not None and original_input not in inputs
+    if eligible and inputs and audio.run('pactl', 'get-default-source') == original_input:
         audio.run('pactl', 'set-default-source', inputs[0])
         if audio.run('pactl', 'get-default-source') == inputs[0]:
-            fallback.parent.mkdir(parents=True, exist_ok=True)
-            fallback.write_text(inputs[0])
+            path = fallback_path(state)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(inputs[0])
+
+
+def outage_due():
+    # Seconds until a pending lost-array notice is due, for the watcher's wait.
+    if outage['since'] is None or outage['notified']:
+        return None
+    return max(0.1, outage['since'] + OUTAGE_GRACE - time.monotonic())
 
 
 def find_dsp(sources):
@@ -270,24 +289,24 @@ def reconcile(audio, state, save_only=False, checked=None):
     dsp = find_dsp(sources)
     if not dsp:
         mapped = any(obj['name'] == MONITOR for obj in sources)
-        if mapped or original_output == SINK:
+        if mapped or original_output == SINK or claim(state):
             leave_mapping(audio, state, sources, original_input, original_output)
-        if mapped and not outage['active']:
+        if mapped:
             # A card or audio restart rebuilds the array within seconds; only a
             # lasting loss is worth telling the user about, once.
-            for attempt in range(100):
-                audio.pause()
-                if find_dsp(audio.objects('sources')):
-                    break
-            else:
-                outage['active'] = True
+            if outage['since'] is None:
+                outage['since'] = time.monotonic()
+            elif not outage['notified'] and time.monotonic() - outage['since'] >= OUTAGE_GRACE:
+                outage['notified'] = True
                 audio.notify('Built-in microphone unavailable', 'Click to restart audio', 'omarchy-restart-audio')
         raise Deferred('No Asahi DSP microphone is present; user service will retry if an array appears')
-    outage['active'] = False
+    outage.update(since=None, notified=False)
     fallback = fallback_path(state)
-    # A fallback the user muted is their choice: the array does not take over.
-    returning = (fallback.exists() and fallback.read_text() == original_input
-                 and any(obj['name'] == original_input and obj.get('mute') is False for obj in sources))
+    claimed = claim(state)
+    # A muted fallback waits for unmute: the array never unmutes capture. A
+    # claimed fallback that went away (default fell to a monitor) returns too.
+    muted_claim = claimed == original_input and any(obj['name'] == original_input and obj.get('mute') is not False for obj in sources)
+    returning = claimed is not None and not muted_claim and (claimed == original_input or original_input not in real_inputs(sources))
     sinks = audio.objects('sinks')
     owner = uuid.uuid4().hex
     module = None
@@ -377,7 +396,7 @@ def reconcile(audio, state, save_only=False, checked=None):
                 audio.run('pactl', 'set-default-source', dsp)
         # Keep the claim only while the fallback is still the default and the
         # returning mapping could not be confirmed live yet.
-        if not (select_monitor and returning and sampled is not True):
+        if not muted_claim and not (select_monitor and returning and sampled is not True):
             fallback.unlink(missing_ok=True)
         if sampled is None:
             problem = 'Could not sample the Asahi microphone stereo mapping; the default input is unchanged'
@@ -485,16 +504,17 @@ class Subscription:
         *complete, self.buffer = self.buffer.split(b'\n')
         return complete
 
-    def wait(self):
+    def wait(self, limit=None):
         if self.process is None and not self.start():
             time.sleep(self.retry)
             return
+        backstop = self.backstop if limit is None else min(self.backstop, limit)
         started = time.monotonic()
         due = None
         latest = None
         while True:
             now = time.monotonic()
-            deadline = started + self.backstop if due is None else min(due, latest)
+            deadline = started + backstop if due is None else min(due, latest)
             if deadline <= now:
                 return
             ready, _, _ = select.select([self.process.stdout], [], [], deadline - now)
@@ -517,7 +537,7 @@ class Subscription:
 def supervise(operation, wait=None):
     subscription = Subscription() if wait is None else None
     if subscription is not None:
-        wait = subscription.wait
+        wait = lambda: subscription.wait(outage_due())
     previous_error = None
     try:
         while True:

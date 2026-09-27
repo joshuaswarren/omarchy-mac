@@ -218,15 +218,16 @@ with tempfile.TemporaryDirectory() as temporary:
     # filter half-built on the M2 Max). The orphaned monitor carries silence:
     # hand capture to a plugged-in real input rather than WirePlumber's
     # fallback (another monitor), move playback off the mapping sink, tell the
-    # user once, and select the mapping again when the array returns unless
-    # the user chose otherwise.
+    # user once the loss lasts, and select the mapping again when the array
+    # returns unless the user chose otherwise.
     def source(name, priority, klass='sound', available=None):
         ports = [{'name': '[In] Port', 'availability': available}] if available else []
         return dict(name=name, ports=ports, active_port='[In] Port' if available else None, monitor_source='',
                     properties={'priority.session': str(priority), 'device.class': klass}, volume={}, mute=False)
     unplugged = source('headset', 1, available='not available')
     plugged = source('headset', 1, available='available')
-    usb = source('usb-mic', 0)
+    usb = source('usb-mic', 5)
+    other = source('other-mic', 0)
     headphones_monitor = dict(source('headphones.monitor', 1000, 'monitor'), monitor_source='headphones')
     raw = source('alsa_input.platform-sound.RawMics', 2000)
     class LostDsp(Audio):
@@ -239,32 +240,44 @@ with tempfile.TemporaryDirectory() as temporary:
             if args[1:2] == ('set-default-source',) and args[2] in self.ignored:
                 self.calls.append(args); return ''
             return super().run(*args)
-    def lost(inputs=(usb,)):
-        m.outage['active'] = False
+    def lost(inputs=(usb, other)):
+        m.outage.update(since=None, notified=False)
         audio = LostDsp(True, m.MONITOR); audio.linked = {90: (21, 'existing'), 91: (22, 'existing')}
         audio.sink = obj(m.SINK, 65536, False); audio.monitor = obj(m.MONITOR, 65536, False)
-        audio.inputs = list(inputs); audio.no_dsp = True
+        audio.inputs = [dict(item) for item in inputs]; audio.no_dsp = True
         return audio
     def deferred(audio, saved):
         try: m.reconcile(audio, saved)
         except m.Deferred: pass
         else: raise AssertionError('a missing array must defer')
     def marker(saved):
-        path = m.fallback_path(saved)
-        return path.read_text() if path.exists() else None
+        return m.claim(saved)
+    later = time.monotonic() + m.OUTAGE_GRACE + 1
     for inputs, expected in (([unplugged], m.MONITOR), ([unplugged, usb], 'usb-mic'), ([plugged], 'headset')):
         audio = lost(inputs); audio.output = m.SINK; saved = state()
         deferred(audio, saved)
         assert audio.default == expected and audio.output == 'speakers', (audio.default, audio.output)
         assert marker(saved) == (None if expected == m.MONITOR else expected)
-        assert len(audio.notices) == 1 and audio.notices[0][-1] == 'omarchy-restart-audio'
-        deferred(audio, saved)
-        assert len(audio.notices) == 1, 'one notice per outage'
+        assert not audio.notices and m.outage_due() is not None, 'a fresh loss is not announced yet'
+        with mock.patch.object(m.time, 'monotonic', return_value=later):
+            deferred(audio, saved); deferred(audio, saved)
+        assert len(audio.notices) == 1 and audio.notices[0][-1] == 'omarchy-restart-audio', 'one notice per lasting outage'
+        assert m.outage_due() is None
     audio.no_dsp = False
     m.reconcile(audio, saved)
     assert audio.default == m.MONITOR and audio.probes == [m.MONITOR] and marker(saved) is None
-    assert not m.outage['active'], 'a present array ends the outage'
-    # A muted mapping is the user's mute; an ignored switch is not ownership.
+    assert m.outage['since'] is None, 'a present array ends the outage'
+    # A short loss (card or audio restart) is never announced.
+    audio = lost(); saved = state(); deferred(audio, saved)
+    audio.no_dsp = False; m.reconcile(audio, saved)
+    with mock.patch.object(m.time, 'monotonic', return_value=later):
+        audio.no_dsp = True; deferred(audio, saved)
+    assert not audio.notices
+    # Without a mapping, a persisted mapping sink still leaves playback.
+    audio = lost(); audio.existing = False; audio.linked = {}; audio.output = m.SINK
+    deferred(audio, state())
+    assert audio.output == 'speakers' and not audio.notices
+    # A muted mapping is the user's mute; an ignored switch is not a claim.
     for side in ('sink', 'monitor'):
         audio = lost(); getattr(audio, side)['mute'] = True; saved = state()
         deferred(audio, saved)
@@ -272,11 +285,23 @@ with tempfile.TemporaryDirectory() as temporary:
     audio = lost(); audio.ignored = ('usb-mic',); saved = state()
     deferred(audio, saved)
     assert audio.default == m.MONITOR and marker(saved) is None
-    # An intervening choice while the array is gone drops the claim.
-    audio = lost(); saved = state(); deferred(audio, saved)
-    audio.default = 'other-mic'; deferred(audio, saved); audio.default = 'usb-mic'; deferred(audio, saved)
-    audio.no_dsp = False; m.reconcile(audio, saved)
-    assert audio.default == 'usb-mic' and not audio.probes and marker(saved) is None
+    # Choosing another real input ends the claim, even after an audio restart
+    # removed the mapping; choosing the fallback again is then the user's own.
+    for restarted in (False, True):
+        audio = lost(); saved = state(); deferred(audio, saved)
+        if restarted: audio.existing = False; audio.linked = {}; audio.module = None
+        audio.default = 'other-mic'; deferred(audio, saved); audio.default = 'usb-mic'; deferred(audio, saved)
+        audio.no_dsp = False; m.reconcile(audio, saved)
+        assert audio.default == 'usb-mic' and not audio.probes and marker(saved) is None, restarted
+    # Losing the claimed input (unplugged) hands over again, or keeps the claim
+    # so the returning array still takes over from the monitor left behind.
+    for remaining, expected in (([other], 'other-mic'), ([], 'headphones.monitor')):
+        audio = lost(); saved = state(); deferred(audio, saved)
+        audio.inputs = [dict(item) for item in remaining]; audio.default = 'headphones.monitor'
+        deferred(audio, saved)
+        assert audio.default == expected and marker(saved) == (expected if remaining else 'usb-mic')
+        audio.no_dsp = False; m.reconcile(audio, saved)
+        assert audio.default == m.MONITOR and marker(saved) is None
     # On return, a silent or unsampled mapping leaves the working fallback.
     for signal, error in ((False, 'no signal'), (None, 'Could not sample')):
         audio = lost(); saved = state(); deferred(audio, saved)
@@ -287,13 +312,14 @@ with tempfile.TemporaryDirectory() as temporary:
         assert audio.default == 'usb-mic' and marker(saved) == 'usb-mic', signal
         audio.carries_signal = True; m.reconcile(audio, saved)
         assert audio.default == m.MONITOR and marker(saved) is None, 'a later live mapping is selected again'
-    # A fallback the user muted stays: the array does not unmute capture.
-    audio = lost([dict(usb)]); saved = state(); deferred(audio, saved)
+    # A muted fallback waits: the array never unmutes capture.
+    audio = lost(); saved = state(); deferred(audio, saved)
     audio.inputs[0]['mute'] = True; audio.no_dsp = False
     m.reconcile(audio, saved)
-    assert audio.default == 'usb-mic' and not audio.probes and marker(saved) is None
-    # A choice seen during setup drops the claim, so a later return to the
-    # fallback is the user's own.
+    assert audio.default == 'usb-mic' and not audio.probes and marker(saved) == 'usb-mic'
+    audio.inputs[0]['mute'] = False; m.reconcile(audio, saved)
+    assert audio.default == m.MONITOR and marker(saved) is None
+    # A choice seen during setup drops the claim.
     class Diverging(LostDsp):
         def graph(self):
             if self.default == 'usb-mic' and not self.no_dsp: self.default = 'other-mic'
@@ -303,17 +329,12 @@ with tempfile.TemporaryDirectory() as temporary:
     assert audio.default == 'other-mic' and marker(saved) is None
     audio.__class__ = LostDsp; audio.default = 'usb-mic'; m.reconcile(audio, saved)
     assert audio.default == 'usb-mic'
-    # A choice made while the returning mapping is set up wins.
+    # A choice made while the returning mapping is sampled wins.
     audio = lost(); saved = state(); deferred(audio, saved)
     audio.no_dsp = False; audio.probe_choice = 'other-mic'
     m.reconcile(audio, saved)
     assert audio.default == 'other-mic' and marker(saved) is None
-    # A card or audio restart rebuilds the array within seconds: no notice.
-    class Rebuilt(LostDsp):
-        def pause(self): self.no_dsp = False
-    audio = lost(); audio.__class__ = Rebuilt; saved = state()
-    deferred(audio, saved)
-    assert not audio.notices and not m.outage['active']
+    m.outage.update(since=None, notified=False)
     # WirePlumber persists the mapping sink as the session default. It is not
     # a speaker; pick a real sink even when that is what get-default-sink returns.
     audio = Audio(existing=True, default=DSP)
@@ -437,6 +458,8 @@ with tempfile.TemporaryDirectory() as temporary:
     assert elapsed >= 0.6, ('stream start and stop must not wake before the backstop', elapsed)
     elapsed = timed(feed("for i in $(seq 20); do echo \"Event 'new' on sink #1\"; sleep 0.05; done; sleep 3"))
     assert 0.9 <= elapsed < 1.5, ('a steady event stream must repair at the settle cap', elapsed)
+    sub = feed("sleep 3"); start = time.monotonic(); sub.wait(0.2); elapsed = time.monotonic() - start; sub.stop()
+    assert 0.2 <= elapsed < 0.5, ('a pending lost-array notice shortens the wait', elapsed)
     sub = feed('exit 0'); elapsed = timed(sub)
     assert elapsed < 0.5 and sub.process is None, 'a lost subscription must yield a repair and resubscribe later'
     assert timed(m.Subscription(command=['/nonexistent/pactl'], retry=0.05)) < 0.5, 'a missing subscriber must degrade to a paced retry'
