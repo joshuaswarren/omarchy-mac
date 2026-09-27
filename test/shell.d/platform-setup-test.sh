@@ -25,14 +25,15 @@ fake_platform "$tmp/apple" apple-silicon
 fake_platform "$tmp/x86" generic
 
 lifecycle=$tmp/lifecycle
-mkdir -p "$lifecycle/usr/lib/omarchy/mac"
-for operation in setup-system setup-user; do
-  cat >"$lifecycle/usr/lib/omarchy/mac/$operation" <<SH
+mkdir -p "$lifecycle/usr/lib/omarchy/mac" "$lifecycle/usr/lib/omarchy/mac-boot"
+for entry in mac/setup-system mac/setup-user mac-boot/setup-boot; do
+  operation=${entry#*/}
+  cat >"$lifecycle/usr/lib/omarchy/$entry" <<SH
 #!/bin/bash
 { printf '%s' "$operation"; (( \$# == 0 )) || printf ' %s' "\$@"; echo; } >>"$tmp/ran"
-[[ ! -e $tmp/fail ]]
+[[ ! -e $tmp/fail && ! -e $tmp/fail-$operation ]]
 SH
-  chmod 755 "$lifecycle/usr/lib/omarchy/mac/$operation"
+  chmod 755 "$lifecycle/usr/lib/omarchy/$entry"
 done
 chmod -R go-w "$lifecycle"
 
@@ -48,16 +49,29 @@ leaf() {
 # ── system setup ─────────────────────────────────────────────────────────────
 
 leaf apple "$hardware_leaf" || fail "apple: the system setup leaf runs" "$(cat "$tmp/output")"
-[[ $(cat "$tmp/ran") == "setup-system" ]] || fail "apple: an install or rerun runs setup-system with no argument" "$(cat "$tmp/ran")"
+[[ $(cat "$tmp/ran") == $'setup-boot\nsetup-system' ]] || fail "apple: an install or rerun runs setup-boot, then setup-system, with no argument" "$(cat "$tmp/ran")"
 leaf apple "$hardware_leaf" OMARCHY_IMAGE_DEFERRED_HARDWARE=1 || fail "apple: the system setup leaf runs on an image's first boot"
-[[ $(cat "$tmp/ran") == "setup-system image-first-boot" ]] ||
-  fail "apple: an image's first boot tells setup-system so" "$(cat "$tmp/ran")"
-touch "$tmp/fail"
+[[ $(cat "$tmp/ran") == $'setup-boot image-first-boot\nsetup-system image-first-boot' ]] ||
+  fail "apple: an image's first boot tells setup-boot and setup-system so" "$(cat "$tmp/ran")"
+touch "$tmp/fail-setup-system"
 if leaf apple "$hardware_leaf"; then
   fail "apple: a failed setup-system fails the leaf"
 fi
-rm -f "$tmp/fail"
-pass "apple: the system setup leaf runs omarchy-mac's setup-system, says when it is an image's first boot, and fails with it"
+[[ $(cat "$tmp/ran") == $'setup-boot\nsetup-system' ]] || fail "apple: setup-system ran after the boot setup and failed" "$(cat "$tmp/ran")"
+rm -f "$tmp/fail-setup-system"
+touch "$tmp/fail-setup-boot"
+if leaf apple "$hardware_leaf"; then
+  fail "apple: a failed setup-boot fails the leaf"
+fi
+[[ $(cat "$tmp/ran") == "setup-boot" ]] || fail "apple: setup-system waits for a boot setup that failed" "$(cat "$tmp/ran")"
+rm -f "$tmp/fail-setup-boot"
+mv "$lifecycle/usr/lib/omarchy/mac-boot/setup-boot" "$tmp/setup-boot.saved"
+if leaf apple "$hardware_leaf"; then
+  fail "apple: a Mac whose boot package lacks setup-boot fails the leaf instead of skipping its boot setup"
+fi
+grep -q "setup-boot on apple-silicon needs omarchy-mac-boot" "$tmp/output" || fail "apple: the failure names the boot package" "$(cat "$tmp/output")"
+mv "$tmp/setup-boot.saved" "$lifecycle/usr/lib/omarchy/mac-boot/setup-boot"
+pass "apple: the system setup leaf runs omarchy-mac-boot's setup-boot, then omarchy-mac's setup-system, says when it is an image's first boot, and fails with either"
 
 touch "$tmp/fail"
 leaf x86 "$hardware_leaf" OMARCHY_IMAGE_DEFERRED_HARDWARE=1 || fail "x86: the system setup leaf is a no-op" "$(cat "$tmp/output")"

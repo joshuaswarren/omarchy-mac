@@ -27,7 +27,7 @@ operations=(
   boot-rebuild
   luks-slots
   migrate
-  setup-system setup-user
+  setup-boot setup-system setup-user
 )
 
 # Runs as the user being set up, never as root, with that user's session.
@@ -92,7 +92,9 @@ fi
 # omarchy-mac (both omacom/omarchy-mac). Provisioning and factory reset have no
 # other path on a Mac, only update-verify checks what an update left in its
 # boot chain, and its boot checks prove the kept LUKS slots that luks-slots
-# records, so those operations are required. update-preflight and migrate are
+# records, so those operations are required, and so is setup-boot, the Mac's
+# boot setup (the GRUB console and the Limine activation), which hardware
+# setup has no other way to run. update-preflight and migrate are
 # optional, and boot-rebuild stays optional until a platform ships it. Setup is
 # optional: a Mac without omarchy-mac keeps Omarchy's generic setup.
 # Moving an operation to required also changes: apple_optional in
@@ -115,6 +117,7 @@ case $platform:$operation in
       reset-prepare reset-verify reset-commit reset-rollback
       update-verify
       luks-slots
+      setup-boot
     )
     ;;
   *)
