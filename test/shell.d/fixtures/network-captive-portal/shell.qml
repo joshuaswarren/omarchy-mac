@@ -126,14 +126,25 @@ ShellRoot {
     check(!panel.testButton.visible && panel.icon === "󰤮", "disconnected icon not portal icon")
     NetworkMock.network.connected = true
     NetworkMock.wifi.connected = true
-    NetworkMock.wired.connected = true
-    bridgeSettle.start()
+    bridgeStart.start()
   }
 
+  // Wait out the startup lookup, then forget it so only the Thunderbolt link
+  // coming up can refill the route device.
+  Timer {
+    id: bridgeStart
+    interval: 1500
+    onTriggered: {
+      test.check(panel.routeDevice === "test-wifi", "startup route lookup reports the Wi-Fi interface")
+      panel.routeDevice = ""
+      NetworkMock.wired.connected = true
+      bridgeSettle.start()
+    }
+  }
   Timer { id: bridgeSettle; interval: 1500; onTriggered: test.bridgeChecks() }
 
   function bridgeChecks() {
-    check(panel.routeDevice === "test-wifi", "route lookup reports the Wi-Fi interface")
+    check(panel.routeDevice === "test-wifi", "a device change repeats the route lookup")
     check(panel.kind === "wifi" && panel.icon !== "󰈀" && panel.icon !== "󰈂", "a wired link without the internet route leaves the Wi-Fi icon")
     panel.routeDevice = "test-wired"
     check(panel.kind === "ethernet", "a wired link that owns the internet route shows Ethernet")
