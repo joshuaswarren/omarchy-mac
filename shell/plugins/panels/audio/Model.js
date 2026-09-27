@@ -233,6 +233,42 @@ function streamRepresentsPlayer(node, player, players, streams) {
   return streamRepresentsMprisPlayer(streamLabel(node, players, streams), playerLabel)
 }
 
+// Apple Silicon only: nodes asahi-audio's DSP graphs and the omarchy-mac
+// microphone mapper create. Callers consult these on an Apple Silicon host
+// alone, so a same-named node elsewhere is never hidden.
+function isAsahiMicMapping(name) {
+  return String(name || "") === "omarchy_asahi_mic"
+}
+
+// The DSP microphone is mono; while the mapper's stereo copy of it exists, that
+// copy is the microphone.
+function isAsahiDspMic(name) {
+  return /^effect_output\.j[0-9]+-mic$/.test(String(name || ""))
+}
+
+// The DSP graphs' own streams: the speaker graph's output into the raw
+// speakers, and the microphone graph's capture from the raw array.
+function isAsahiInternalStream(name) {
+  return /^(effect_output\.j[0-9]+-convolver|audio_effect\.j[0-9]+-mic)$/.test(String(name || ""))
+}
+
+function isAsahiRawDevice(name) {
+  var value = String(name || "")
+  return value === "alsa_output.platform-sound.RawSpeakers" || value === "alsa_input.platform-sound.RawMics"
+}
+
+function asahiSourceHidden(name, mappingPresent) {
+  return isAsahiRawDevice(name) || (mappingPresent === true && isAsahiDspMic(name))
+}
+
+// `wpctl get-volume <id>` prints "Volume: 0.50", with " [MUTED]" when muted, on
+// the same cubic scale as PwNodeAudio.volume.
+function parseWpctlVolume(text) {
+  var match = /^Volume:\s+([0-9]+(?:\.[0-9]+)?)(\s+\[MUTED\])?$/.exec(String(text || "").trim())
+  if (!match) return null
+  return { volume: parseFloat(match[1]), muted: !!match[2] }
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     isPlaybackStream: isPlaybackStream,
@@ -257,6 +293,12 @@ if (typeof module !== "undefined") {
     matchingMprisStreamLabel: matchingMprisStreamLabel,
     unmatchedMprisStreamLabel: unmatchedMprisStreamLabel,
     streamLabel: streamLabel,
-    streamRepresentsPlayer: streamRepresentsPlayer
+    streamRepresentsPlayer: streamRepresentsPlayer,
+    isAsahiMicMapping: isAsahiMicMapping,
+    isAsahiDspMic: isAsahiDspMic,
+    isAsahiInternalStream: isAsahiInternalStream,
+    isAsahiRawDevice: isAsahiRawDevice,
+    asahiSourceHidden: asahiSourceHidden,
+    parseWpctlVolume: parseWpctlVolume
   }
 }
