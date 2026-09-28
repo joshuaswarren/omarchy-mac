@@ -1,11 +1,11 @@
 #!/bin/bash -p
 
 # omarchy-lifecycle-dispatch luks-slots owner=<slot> [recovery=<slot>]. Owner
-# provisioning runs this once the re-key keeps only the owner's and the
-# recovery slot, and omarchy-drive-password after it changed the owner's key,
-# which can land in another slot. It records them in encrypt.state on the boot
-# partition, where the boot check proves the LUKS header holds exactly those
-# slots.
+# provisioning runs this with an empty recovery= once the re-key keeps only the
+# owner's slot, and omarchy-drive-password after it changed the owner's key,
+# which can land in another slot, keeping a recovery slot an earlier setup
+# recorded. It records them in encrypt.state on the boot partition, where the
+# boot check proves the LUKS header holds exactly those slots.
 
 set -euo pipefail
 

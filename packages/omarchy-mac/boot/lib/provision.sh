@@ -122,9 +122,10 @@ initramfs_orders_firmware() {
 }
 
 # Phase moves to finished. partition= and luks_uuid= stay as the initramfs
-# wrote them; the owner slot, and a recovery slot the owner acknowledged, come
-# from the re-key journal so later boot checks can prove the header holds
-# exactly those slots. luks-slots records them again whenever they change.
+# wrote them; the owner slot, and a recovery slot an older setup's owner
+# acknowledged, come from the re-key journal so later boot checks can prove the
+# header holds exactly those slots. luks-slots records them again whenever they
+# change.
 write_encrypt_state() {
   local phase=$1 owner_slot recovery_slot value
 
@@ -295,12 +296,13 @@ provision_verify() {
   fi
 }
 
-# luks-slots owner=<slot> [recovery=<slot>]: record the slots of the owner's
-# password and of the recovery key in encrypt.state, whenever setup or a
-# password change leaves them in other slots, so the boot check can prove the
-# header holds exactly those. Without recovery=, the recorded one stays; an
-# empty one records none. Each must be a key slot the root's header holds. A
-# Mac whose disk the image did not encrypt records nothing.
+# luks-slots owner=<slot> [recovery=<slot>]: record the slot of the owner's
+# password, and of a recovery key an earlier Mac setup added, in encrypt.state
+# whenever setup or a password change leaves them in other slots, so the boot
+# check can prove the header holds exactly those. Without recovery=, the
+# recorded one stays; an empty one, which owner setup passes, records none.
+# Each must be a key slot the root's header holds. A Mac whose disk the image
+# did not encrypt records nothing.
 record_luks_slots() {
   local arg owner="" recovery="" recovery_given=0 phase device slots slot
 
