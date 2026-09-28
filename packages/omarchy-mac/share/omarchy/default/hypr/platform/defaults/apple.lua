@@ -7,11 +7,11 @@ if not (o and o.shell_succeeds and o.shell_succeeds("omarchy-hw-apple-silicon"))
   return
 end
 
--- The built-in trackpad clicks physically; Asahi's disable-while-typing does
--- not stop stray taps, so tap-to-click stays off. The user's input.lua can turn
--- it back on with the same line and tap_to_click = true.
-hl.device({ name = "apple-mtp-multi-touch", tap_to_click = false })
-hl.device({ name = "apple-spi-trackpad", tap_to_click = false })
+-- A runtime older than Omarchy's platform loader has no settings slot, so the
+-- Mac's settings (settings/apple.lua) load from here instead.
+if not package.loaded["default.hypr.platform"] then
+  dofile(debug.getinfo(1, "S").source:match("^@(.+)/defaults/[^/]+$") .. "/settings/apple.lua")
+end
 
 if _G.omarchy_default_bindings ~= false then
   -- The lid switch is "Apple SMC power/lid events" here, so Omarchy's "Lid
