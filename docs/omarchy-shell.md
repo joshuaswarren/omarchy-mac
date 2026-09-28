@@ -374,7 +374,7 @@ A panel with a camera cutout (a notch) at its top keeps a top bar out of it: the
 { "panels": [ { "connector": "eDP", "width": 3024, "height": 1964, "top": 64 } ] }
 ```
 
-A panel matches a screen whose connector name starts with `connector` and whose mode is `width` x `height` physical pixels; `top` is the physical rows the cutout covers. On such a panel, `[bar] notch-height` (logical pixels, not scaled with the font) sets the floor by hand. The bar reads the file when the shell starts and whenever it changes; a file installed where its directory didn't exist yet is read at the next shell start.
+A panel matches a screen whose connector name starts with `connector` and whose mode, as `hyprctl monitors` reports it, is `width` x `height` physical pixels, at any scale; `top` is the physical rows the cutout covers. On such a panel, `[bar] notch-height` (logical pixels, not scaled with the font) sets the floor by hand. The bar reads the file when the shell starts and whenever it changes; a file installed where its directory didn't exist yet is read at the next shell start.
 
 ## Custom bar modules
 

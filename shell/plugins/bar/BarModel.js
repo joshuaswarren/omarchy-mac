@@ -238,21 +238,36 @@ function parseCutouts(text) {
   return cutouts
 }
 
-// The cutout at the top of this screen, in logical pixels, or 0. Logical sizes
-// are rounded, so the reconstructed mode can be a couple of pixels off at
-// fractional scales.
-function cutoutTop(cutouts, screenName, logicalWidth, logicalHeight, devicePixelRatio) {
+// The cutout at the top of this screen, in logical pixels, or 0. `mode` is the
+// output's physical mode as Hyprland reports it ({ width, height, transform }).
+// Qt's devicePixelRatio is a whole number even at a fractional scale, so the
+// logical size times it rebuilds the mode only at whole scales; that stands in
+// just until Hyprland's answer arrives. A mode Hyprland reports that matches no
+// panel has no cutout.
+function cutoutTop(cutouts, screenName, logicalWidth, logicalHeight, devicePixelRatio, mode) {
   var name = String(screenName || "")
-  var scale = Number(devicePixelRatio) > 0 ? Number(devicePixelRatio) : 1
-  var width = Math.round(Number(logicalWidth) * scale)
-  var height = Math.round(Number(logicalHeight) * scale)
-  if (!(width > 0) || !(height > 0)) return 0
+  var logical = Number(logicalWidth)
+  var logicalTall = Number(logicalHeight)
+  if (!(logical > 0) || !(logicalTall > 0)) return 0
+  var width = Number(mode && mode.width)
+  var height = Number(mode && mode.height)
+  if (width > 0 && height > 0) {
+    // Turned a quarter or upside down, the cutout is on another edge.
+    var transform = Number(mode.transform) || 0
+    if (transform !== 0 && transform !== 4) return 0
+    if ((width > height) !== (logical > logicalTall)) return 0
+  } else {
+    var scale = Number(devicePixelRatio) > 0 ? Number(devicePixelRatio) : 1
+    width = Math.round(logical * scale)
+    height = Math.round(logicalTall * scale)
+  }
   var list = Array.isArray(cutouts) ? cutouts : []
   for (var i = 0; i < list.length; i++) {
     var panel = list[i]
     if (name.indexOf(panel.connector) !== 0) continue
+    // Logical sizes are rounded, so a rebuilt mode can be a couple of pixels off.
     if (Math.abs(width - panel.width) <= 4 && Math.abs(height - panel.height) <= 4)
-      return Math.ceil(panel.top / scale)
+      return Math.ceil(panel.top * logical / width)
   }
   return 0
 }
@@ -261,17 +276,17 @@ function cutoutTop(cutouts, screenName, logicalWidth, logicalHeight, devicePixel
 // calibrated [bar] notch-height in its place. A screen without a cutout, or a
 // bar on another edge, has no floor, so a calibration never reaches an
 // external monitor.
-function notchFloor(cutouts, position, screenName, logicalWidth, logicalHeight, devicePixelRatio, calibrated) {
+function notchFloor(cutouts, position, screenName, logicalWidth, logicalHeight, devicePixelRatio, mode, calibrated) {
   if (position !== "top") return 0
-  var top = cutoutTop(cutouts, screenName, logicalWidth, logicalHeight, devicePixelRatio)
+  var top = cutoutTop(cutouts, screenName, logicalWidth, logicalHeight, devicePixelRatio, mode)
   if (!(top > 0)) return 0
   return Number(calibrated) > 0 ? Math.round(Number(calibrated)) : top
 }
 
 // A cutout covers the middle of a top bar, so that bar draws its center
 // section beside the right one.
-function centerBesideRight(cutouts, position, screenName, logicalWidth, logicalHeight, devicePixelRatio) {
-  return position === "top" && cutoutTop(cutouts, screenName, logicalWidth, logicalHeight, devicePixelRatio) > 0
+function centerBesideRight(cutouts, position, screenName, logicalWidth, logicalHeight, devicePixelRatio, mode) {
+  return position === "top" && cutoutTop(cutouts, screenName, logicalWidth, logicalHeight, devicePixelRatio, mode) > 0
 }
 
 if (typeof module !== "undefined") {
