@@ -6,7 +6,8 @@
 #
 # The entrypoints set MAC_BOOT_ROOT before sourcing: empty on a live system, a
 # fixture root in unprivileged tests. Everything here reads fixed paths below
-# it. Output goes to stderr, which the caller shows or logs.
+# it. Output goes to stderr, which the caller shows or logs; only luks-slots
+# --owner prints its answer on stdout.
 
 BOOT_LUKS_KEY=$MAC_BOOT_ROOT/boot/omarchy/luks-key
 ENCRYPT_STATE=$MAC_BOOT_ROOT/boot/omarchy/encrypt.state
