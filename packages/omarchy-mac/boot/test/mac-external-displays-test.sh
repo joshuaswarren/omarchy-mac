@@ -7,6 +7,7 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 # card's external connectors are held off; they come on for the desktop.
 FILES=$ROOT/files
 SCRIPT=$FILES/usr/lib/omarchy/mac-boot/external-displays
+LID=$FILES/usr/lib/omarchy/mac-boot/lid-state
 RULES=$FILES/usr/lib/udev/rules.d/70-omarchy-mac-external-displays.rules
 UNIT=$FILES/usr/lib/systemd/system/omarchy-mac-external-displays.service
 
@@ -29,16 +30,17 @@ new_mac() {
   echo 01234567-89ab-cdef-0123-456789abcdef >"$tmp/uuid"
   mkdir -p "$tmp/bin"
   printf '#!/bin/bash\n[[ -e %q ]]\n' "$tmp/splash" >"$tmp/bin/plymouth"
-  printf '#!/bin/bash\necho "$*" >>%q\ncat %q\n' "$tmp/busctl.log" "$tmp/lid" >"$tmp/bin/busctl"
-  chmod +x "$tmp/bin/plymouth" "$tmp/bin/busctl"
-  rm -f "$tmp/busctl.log"
+  printf '#!/bin/bash\n[[ -s %q ]] && cat %q\n' "$tmp/lid" "$tmp/lid" >"$tmp/bin/lid-state"
+  printf '#!/bin/bash\necho "$*" >>%q\n' "$tmp/journal" >"$tmp/bin/logger"
+  chmod +x "$tmp/bin/plymouth" "$tmp/bin/lid-state" "$tmp/bin/logger"
+  rm -f "$tmp/journal"
   : >"$tmp/splash"
-  echo "b false" >"$tmp/lid"
+  echo open >"$tmp/lid"
 }
 
 displays() {
   OMARCHY_SYSFS=$sys OMARCHY_MAC_DISPLAYS_STATE=$tmp/run OMARCHY_UUID_SOURCE=$tmp/uuid \
-    OMARCHY_PLYMOUTH=$tmp/bin/plymouth OMARCHY_BUSCTL=$tmp/bin/busctl bash "$SCRIPT" "$@"
+    OMARCHY_PLYMOUTH=$tmp/bin/plymouth OMARCHY_LID_STATE=$tmp/bin/lid-state OMARCHY_LOGGER=$tmp/bin/logger bash "$SCRIPT" "$@"
 }
 
 status() { cat "$sys/class/drm/$1/status"; }
@@ -52,8 +54,8 @@ displays hold card2 || fail "hold succeeds"
 untouched || fail "the built-in panel and other cards are never held"
 [[ $(<"$tmp/run/external-displays-held") == $'card2-HDMI-A-1\ncard2-USB-1\ncard2-USB-2\ncard2-USB-3' ]] ||
   fail "hold records what it held: $(cat "$tmp/run/external-displays-held")"
-grep -Fxq -- '--timeout=2 get-property org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager LidClosed' "$tmp/busctl.log" ||
-  fail "the lid comes from logind, bounded: $(cat "$tmp/busctl.log")"
+[[ $(<"$tmp/journal") == "-t omarchy-mac-external-displays -- held card2's external displays off: HDMI-A-1 USB-1 USB-2 USB-3" ]] ||
+  fail "hold logs what it held: $(cat "$tmp/journal")"
 displays hold card2 && (( $(wc -l <"$tmp/run/external-displays-held") == 4 )) || fail "a replayed add holds nothing twice"
 pass "an open laptop under the splash holds its external displays off"
 
@@ -61,7 +63,7 @@ for case in shut unknown desktop no-chassis no-splash released no-panel bad-name
   new_mac
   card=card2
   case $case in
-    shut) echo "b true" >"$tmp/lid" ;;
+    shut) echo closed >"$tmp/lid" ;;
     unknown) : >"$tmp/lid" ;;
     desktop) printf 'desktop\0' >"$sys/firmware/devicetree/base/chassis-type" ;;
     no-chassis) rm "$sys/firmware/devicetree/base/chassis-type" ;;
@@ -72,6 +74,21 @@ for case in shut unknown desktop no-chassis no-splash released no-panel bad-name
   esac
   displays hold "$card" || fail "hold succeeds ($case)"
   [[ $(externals) == "    " && ! -s $tmp/run/external-displays-held ]] || fail "hold changes nothing ($case): $(externals)"
+  case $case in
+    shut) why="the lid is closed" ;;
+    unknown) why="the lid is unknown" ;;
+    desktop | no-chassis) why="this Mac is not a laptop" ;;
+    no-splash) why="no splash is running" ;;
+    released) why="the splash is over" ;;
+    no-panel) why="it has no built-in panel" ;;
+    bad-name) why="" ;;
+  esac
+  if [[ -n $why ]]; then
+    [[ $(<"$tmp/journal") == "-t omarchy-mac-external-displays -- not holding card2's external displays: $why" ]] ||
+      fail "hold logs why it held nothing ($case): $(cat "$tmp/journal" 2>/dev/null)"
+  else
+    [[ ! -e $tmp/journal ]] || fail "a bad card name is ignored silently"
+  fi
 done
 pass "a shut or unknown lid, a desktop Mac, no splash, a finished splash or no built-in panel holds nothing"
 
@@ -112,13 +129,35 @@ if displays release >/dev/null 2>"$tmp/err"; then fail "a card that cannot be si
 grep -Fq 'could not signal card2' "$tmp/err" || fail "the failure names the card"
 pass "release reports what it could not do"
 
+# ── lid ────────────────────────────────────────────────────────────────────
+# The lid comes from the kernel's switch, not logind, which can start after
+# the card appears. Reading a real switch is checked on hardware.
+lid() { OMARCHY_SYSFS=$tmp/lsys OMARCHY_DEV=$tmp/ldev perl "$LID"; }
+rm -rf "$tmp/lsys" "$tmp/ldev"
+mkdir -p "$tmp/ldev/input"
+out=$(lid) && fail "no input devices: the lid is unknown"
+[[ -z $out ]] || fail "an unknown lid prints nothing: $out"
+mkdir -p "$tmp/lsys/class/input/input0/capabilities" "$tmp/lsys/class/input/input0/event0"
+echo 0 >"$tmp/lsys/class/input/input0/capabilities/sw"
+lid >/dev/null && fail "a device without a lid switch is not a lid"
+mkdir -p "$tmp/lsys/class/input/input3/capabilities" "$tmp/lsys/class/input/input3/event3"
+echo "10 1" >"$tmp/lsys/class/input/input3/capabilities/sw"
+lid >/dev/null && fail "a lid switch without its device node is unknown"
+: >"$tmp/ldev/input/event3"
+out=$(lid) && fail "a lid switch that won't answer EVIOCGSW is unknown"
+[[ -z $out ]] || fail "a switch that can't be read prints nothing: $out"
+[[ -x $LID ]] && perl -c "$LID" 2>/dev/null || fail "the lid reader is executable and parses"
+(( 0x8008451b == (2 << 30 | 8 << 16 | 0x45 << 8 | 0x1b) )) || fail "EVIOCGSW reads 8 bytes"
+pass "the lid is read from the kernel's switch, unknown when it can't be"
+
 # ── wiring ─────────────────────────────────────────────────────────────────
 [[ -x $SCRIPT ]] && bash -n "$SCRIPT" || fail "the script is executable and parses"
 grep -Fxq 'ACTION=="add", SUBSYSTEM=="drm", KERNEL=="card[0-9]*", ENV{DEVTYPE}=="drm_minor", DRIVERS=="apple-drm", RUN+="/usr/lib/omarchy/mac-boot/external-displays hold %k"' "$RULES" ||
   fail "the Apple display card is held as it appears"
 grep -Fxq 'ACTION=="change", SUBSYSTEM=="drm", KERNEL=="card[0-9]*", ENV{SYNTH_ARG_OMARCHYMACDISPLAYS}=="1", ENV{HOTPLUG}="1"' "$RULES" ||
   fail "the release's synthetic change is a hotplug (aquamarine rescans on HOTPLUG=1 only)"
-grep -Fxq 'After=plymouth-quit.service plymouth-quit-wait.service' "$UNIT" || fail "the release waits for the splash, which first boot holds"
+grep -Fxq 'After=plymouth-quit.service plymouth-quit-wait.service omarchy-provision-owner.service omarchy-drive-recover.service' "$UNIT" ||
+  fail "the release waits for the splash, which first boot holds, and for owner setup or a password reset on tty1"
 grep -Fxq 'Before=display-manager.service sddm.service' "$UNIT" || fail "the release runs before the display manager"
 grep -Fxq 'ExecStart=/usr/lib/omarchy/mac-boot/external-displays release' "$UNIT" || fail "the unit runs the release"
 [[ $(readlink "$FILES/usr/lib/systemd/system/multi-user.target.wants/omarchy-mac-external-displays.service") == ../omarchy-mac-external-displays.service ]] ||
