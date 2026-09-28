@@ -20,11 +20,13 @@ if (( EUID != 0 )); then
   root=${OMARCHY_MAC_BOOT_ROOT:-}
 fi
 
-# An unreadable file can't be checked, so it counts.
+# A top-level line only: an indented one sits in a branch, as in the HOOKS
+# baseline itself, and doesn't say what this Mac boots. An unreadable file
+# can't be checked, so it counts.
 platform_hooks() {
   [[ -e $root$1 ]] || return 1
   [[ -r $root$1 ]] || return 0
-  grep -Eq '^[[:space:]]*HOOKS\+?=\(([^)#]*[[:space:]])?(asahi|encrypt)([[:space:]][^)#]*)?\)' "$root$1"
+  grep -Eq '^HOOKS\+?=\(([^)#]*[[:space:]])?(asahi|encrypt)([[:space:]][^)#]*)?\)' "$root$1"
 }
 
 for path in "$@"; do

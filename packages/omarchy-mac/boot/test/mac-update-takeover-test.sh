@@ -45,12 +45,16 @@ printf '%s\n' 'HOOKS=(base systemd plymouth autodetect microcode modconf kms key
 printf '%s\n' '#HOOKS=(base udev asahi encrypt filesystems)' 'HOOKS=(base systemd block filesystems) # encrypt' \
   >"$fixture/etc/mkinitcpio.conf.d/omarchy_hooks.conf"
 "$takeover" /etc/mkinitcpio.conf.d/omarchy_hooks.conf || fail 'commented hooks do not count'
+# The HOOKS baseline's own lines sit in its branches.
+cp "$ROOT/../../../etc/mkinitcpio.conf.d/00-omarchy-hooks.conf" "$fixture/etc/mkinitcpio.conf.d/00-omarchy-hooks.conf"
+grep -q '^ .*HOOKS=(.* encrypt ' "$fixture/etc/mkinitcpio.conf.d/00-omarchy-hooks.conf" || fail 'the baseline fixture has its busybox branch'
+"$takeover" /etc/mkinitcpio.conf.d/00-omarchy-hooks.conf || fail 'an unowned copy of the HOOKS baseline may be taken over'
 pass 'the memory, USB and mkinitcpio drop-ins omarchy-settings ships on aarch64 may be taken over'
 
 # A legacy Mac whose drop-in carries its unlock: the baseline sorts first, so
 # the drop-in's line is the one its initramfs boots with.
 for line in 'HOOKS=(base udev autodetect modconf kms keyboard keymap consolefont block encrypt filesystems fsck)' \
-  '  HOOKS=(base udev asahi block filesystems fsck)' 'HOOKS+=(encrypt)' 'HOOKS=(encrypt filesystems)' 'HOOKS=(base asahi)'; do
+  'HOOKS=(base udev asahi block filesystems fsck)' 'HOOKS+=(encrypt)' 'HOOKS=(encrypt filesystems)' 'HOOKS=(base asahi)'; do
   printf '# Omarchy\n%s\n' "$line" >"$fixture/etc/mkinitcpio.conf.d/omarchy_hooks.conf"
   refuses "Refusing to replace /etc/mkinitcpio.conf.d/omarchy_hooks.conf: its HOOKS set how this Mac's initramfs unlocks and boots; move that HOOKS line into /etc/mkinitcpio.conf, then run omarchy update again" \
     /etc/mkinitcpio.conf.d/omarchy_hooks.conf /etc/systemd/oomd.conf.d/10-omarchy.conf
