@@ -8,10 +8,12 @@ if not (o and o.shell_succeeds and o.shell_succeeds("omarchy-hw-apple-silicon"))
 end
 
 -- The built-in trackpad clicks physically; Asahi's disable-while-typing does
--- not stop stray taps, so tap-to-click stays off. The user's input.lua can turn
--- it back on with the same line and tap_to_click = true.
-hl.device({ name = "apple-mtp-multi-touch", tap_to_click = false })
-hl.device({ name = "apple-spi-trackpad", tap_to_click = false })
+-- not stop stray taps, so tap-to-click stays off. It is set with hl.config, as
+-- anything a user may set globally is: Hyprland lets an hl.device value beat
+-- the global one whatever the order, so a per-device default would keep the
+-- user's own global tap_to_click = true from working. An external touchpad on
+-- a Mac starts with tapping off too.
+hl.config({ input = { touchpad = { tap_to_click = false } } })
 
 -- A workspace swipe steps by number, so it reaches empty workspaces as Spaces
 -- do in macOS. Hyprland's default steps only through workspaces that exist and

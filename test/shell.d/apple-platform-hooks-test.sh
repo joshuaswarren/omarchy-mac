@@ -41,8 +41,9 @@ chmod +x "$tmpdir"/*-bin/omarchy-hw-apple-silicon
 
 # Loads the runtime's hyprland.lua against a user's ~/.config/hypr and prints
 # every bind ("bind<TAB>keys<TAB>command", "global <name>" for the shell's
-# global shortcut, or "focus <keyboards>" for a bind scoped to keyboards) and
-# device setting ("device<TAB>name<TAB>tap_to_click").
+# global shortcut, or "focus <keyboards>" for a bind scoped to keyboards), every
+# device setting ("device<TAB>name") and every global tap-to-click setting
+# ("tap_to_click<TAB>value").
 load_config() {
   local platform=$1 staged=${2:-$packaged} edit=${3:-} home platform_vars
   mapfile -t platform_vars < <(platform_env "$staged")
@@ -82,7 +83,13 @@ hl = setmetatable({
     end
   end,
   unbind = function(keys) print("unbind\t" .. keys) end,
-  device = function(device) print("device\t" .. device.name .. "\t" .. tostring(device.tap_to_click)) end,
+  device = function(device) print("device\t" .. device.name) end,
+  config = function(config)
+    local touchpad = config.input and config.input.touchpad
+    if touchpad and touchpad.tap_to_click ~= nil then
+      print("tap_to_click\t" .. tostring(touchpad.tap_to_click))
+    end
+  end,
   get_config = function() return nil end,
   get_active_window = function() return nil end,
   get_monitors = function() return {} end,
@@ -120,28 +127,28 @@ bound "$apple" "SHIFT + XF86MonBrightnessUp" "omarchy-brightness-keyboard up" &&
   fail "Shift+brightness drives a Mac's keyboard backlight" "$apple"
 (( $(grep -c $'^bind\tSHIFT + XF86MonBrightnessUp\t' <<<"$apple") == 1 )) ||
   fail "the Mac's Shift+brightness replaces Omarchy's display maximum instead of joining it" "$apple"
-grep -Fxq $'device\tapple-mtp-multi-touch\tfalse' <<<"$apple" && grep -Fxq $'device\tapple-spi-trackpad\tfalse' <<<"$apple" ||
-  fail "a Mac's built-in trackpad does not tap to click" "$apple"
 # A runtime with the settings slot loads settings/apple.lua itself; an older
-# one gets it through defaults/apple.lua. Either way each device is set once.
-(( $(grep -c $'^device\tapple-spi-trackpad\t' <<<"$apple") == 1 && $(grep -c $'^device\tapple-mtp-multi-touch\t' <<<"$apple") == 1 )) ||
-  fail "the Mac's trackpad settings load once" "$apple"
+# one gets it through defaults/apple.lua. Either way tapping is turned off once,
+# globally, and no device setting outranks the user's global one.
+[[ $(grep '^tap_to_click' <<<"$apple") == $'tap_to_click\tfalse' ]] ||
+  fail "a Mac's touchpads do not tap to click, set once" "$apple"
+! grep -q '^device' <<<"$apple" || fail "the Mac sets no per-device value the user's global one could not replace" "$apple"
 if [[ -f $runtime/default/hypr/platform.lua ]]; then
-  trackpad_line=$(grep -n $'^device\tapple-spi-trackpad\t' <<<"$apple" | cut -d: -f1)
+  trackpad_line=$(grep -n '^tap_to_click' <<<"$apple" | cut -d: -f1)
   terminal_line=$(grep -n $'^bind\tSUPER + RETURN\t' <<<"$apple" | cut -d: -f1)
   [[ -n $trackpad_line && -n $terminal_line ]] && (( trackpad_line > terminal_line )) ||
     fail "with the settings slot, the Mac's trackpad settings follow Omarchy's defaults" "$apple"
 fi
 pass "a Mac gets its lid switch, capture chords, keyboard backlight chords and trackpad from omarchy-mac"
 
-tapping=$(load_config apple "$packaged" 'hl.device({ name = "apple-spi-trackpad", tap_to_click = true })') ||
+tapping=$(load_config apple "$packaged" 'hl.config({ input = { touchpad = { tap_to_click = true } } })') ||
   fail "the config loads with the user's tap-to-click" "$tapping"
-[[ $(grep $'^device\tapple-spi-trackpad\t' <<<"$tapping" | tail -n 1) == $'device\tapple-spi-trackpad\ttrue' ]] ||
-  fail "the user's input.lua turns tap-to-click back on" "$tapping"
+[[ $(grep '^tap_to_click' <<<"$tapping") == $'tap_to_click\tfalse\ntap_to_click\ttrue' ]] ||
+  fail "the user's global tap_to_click = true in input.lua comes after the Mac's and wins" "$tapping"
 pass "the user's input.lua replaces the Mac's trackpad settings"
 
 for output in "$other" "$bare"; do
-  ! grep -q 'Apple SMC\|omarchy-capture-screenshot \(fullscreen\|region\|windows\)$\|SHIFT + XF86MonBrightness.*brightness-keyboard\|^device\|focus apple' <<<"$output" ||
+  ! grep -q 'Apple SMC\|omarchy-capture-screenshot \(fullscreen\|region\|windows\)$\|SHIFT + XF86MonBrightness.*brightness-keyboard\|^device\|^tap_to_click\|focus apple' <<<"$output" ||
     fail "no Mac default without a Mac or without omarchy-mac" "$output"
   bound "$output" "SHIFT + XF86MonBrightnessUp" "omarchy-brightness-display 100%" || fail "Omarchy's Shift+brightness stays elsewhere" "$output"
   bound "$output" "PRINT" "omarchy-capture-screenshot" || fail "Omarchy's own capture bind stays" "$output"
