@@ -19,7 +19,7 @@ for channel in stable rc edge; do
 done
 [[ -x $stage/usr/bin/omarchy-hw-apple && $(readlink "$stage/usr/share/omarchy/bin/omarchy-hw-apple") == /usr/bin/omarchy-hw-apple ]] ||
   fail 'the legacy alias is staged in /usr/bin and linked from the runtime tree'
-for file in hypr/platform/apple-gestures.lua hypr/platform/defaults/apple.lua omarchy/platform/key-names shell/platform/display-cutouts.json; do
+for file in hypr/platform/apple-gestures.lua hypr/platform/defaults/apple.lua hypr/platform/settings/apple.lua omarchy/platform/key-names shell/platform/display-cutouts.json; do
   [[ -f $stage/usr/share/omarchy/default/$file ]] || fail "$file is staged in the runtime's platform hooks"
 done
 python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$stage/usr/share/omarchy/default/shell/platform/display-cutouts.json" ||
