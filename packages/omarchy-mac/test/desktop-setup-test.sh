@@ -20,9 +20,11 @@ done
 [[ -x $stage/usr/bin/omarchy-hw-apple && $(readlink "$stage/usr/share/omarchy/bin/omarchy-hw-apple") == /usr/bin/omarchy-hw-apple ]] ||
   fail 'the legacy alias is staged in /usr/bin and linked from the runtime tree'
 platform=$stage/usr/share/omarchy-platform
-for file in hypr/defaults/apple.lua hypr/settings/apple.lua hypr/gestures/apple-gestures.lua key-names display-cutouts.json displays.conf; do
+for file in hypr/defaults/apple.lua hypr/settings/apple.lua hypr/gestures/apple-gestures.lua key-names display-cutouts.json displays.conf keyrings; do
   [[ -f $platform/$file && ! -L $platform/$file ]] || fail "$file is staged in the platform root"
 done
+[[ $(grep -v '^#' "$platform/keyrings") == asahi-alarm-keyring ]] ||
+  fail 'the platform names the [asahi-alarm] keyring for omarchy update to refresh'
 python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$platform/display-cutouts.json" ||
   fail 'the cutout description is valid JSON'
 # A runtime older than the platform root reads the same files from its own tree.
