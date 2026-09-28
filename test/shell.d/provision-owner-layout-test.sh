@@ -18,7 +18,7 @@ stub_bin=$tmp/bin
 calls=$tmp/calls
 mkdir -p "$omarchy/bin" "$omarchy/install/provisioning" "$stub_bin"
 cp "$ROOT/logo.txt" "$omarchy/logo.txt"
-cp "$ROOT/install/provisioning/luks-rekey.sh" "$ROOT/install/provisioning/luks-recovery.sh" "$omarchy/install/provisioning/"
+cp "$ROOT/install/provisioning/luks-rekey.sh" "$omarchy/install/provisioning/"
 
 cat >"$stub_bin/stty" <<'SH'
 #!/bin/bash

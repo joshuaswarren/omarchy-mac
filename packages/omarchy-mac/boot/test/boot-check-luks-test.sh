@@ -297,6 +297,14 @@ encrypt_root() {
   TEST_LUKS_TOKENS=""
 }
 
+# What owner setup leaves now: the owner's slot alone, and no recovery slot.
+owner_only_root() {
+  encrypt_root
+  printf 'format=1\nphase=finished\npartition=PART-1\nluks_uuid=abcd-ef\nowner_slot=1\n' >"$root/boot/omarchy/encrypt.state"
+  TEST_LUKS_SLOT_COUNT=1
+  TEST_LUKS_SLOTS="1"
+}
+
 # Unencrypted roots keep the existing expectations; missing install.conf is fine.
 system
 [[ ! -e $root/boot/efi/omarchy/install.conf ]] || fail "the fixture has no install.conf"
@@ -371,7 +379,37 @@ system
 encrypt_root
 TEST_LUKS_SLOTS="0 1"
 run_check
-expect_fail "wrong slot numbers after provisioning" "does not contain the recorded owner and recovery slots"
+expect_fail "wrong slot numbers after provisioning" "does not contain the recorded key slot 2"
+
+system
+owner_only_root
+run_check
+expect_pass "an owner-only disk after provisioning"
+
+system
+owner_only_root
+TEST_LUKS_SLOTS="1 2"
+run_check
+expect_fail "a second keyslot on an owner-only disk" "(2 keyslots, expected 1)"
+
+system
+owner_only_root
+TEST_LUKS_SLOTS="0"
+run_check
+expect_fail "an owner-only disk whose one keyslot is not the owner's" "does not contain the recorded key slot 1"
+
+system
+owner_only_root
+printf 'format=1\nphase=finished\npartition=PART-1\nluks_uuid=abcd-ef\n' >"$root/boot/omarchy/encrypt.state"
+run_check
+expect_fail "encrypt.state without owner_slot" "does not record owner_slot after provisioning"
+
+system
+encrypt_root
+printf 'format=1\nphase=finished\npartition=PART-1\nluks_uuid=abcd-ef\nowner_slot=1\nrecovery_slot=1\n' >"$root/boot/omarchy/encrypt.state"
+run_check
+expect_fail "the same slot recorded for owner and recovery" "records the same slot for owner and recovery"
+pass "an owner-only disk and a disk with a recovery slot each pass with exactly their recorded slots"
 
 # luksDump lists tokens the way it lists keyslots. A TPM2 and a keyring token on
 # the owner and recovery slots are not leftover keyslots, and a keyring token

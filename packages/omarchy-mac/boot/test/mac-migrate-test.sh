@@ -786,7 +786,7 @@ exit "$(cat "$MIGRATE_FIXTURE/snapper-status" 2>/dev/null || echo 0)"
 LEAF
 }
 
-repaired_names="1789146110 1789148088 1789158179 1789172112 1790327324 1790380870"
+repaired_names="1789146110 1789148088 1789158179 1789172112 1790327324"
 
 repairs_fixture repairs
 kill_after preflight
@@ -803,10 +803,10 @@ finish
 grep -qx "snapper-leaf OMARCHY_PATH=$R/usr/share/omarchy" "$F/boot.log" || fail "the Snapper leaf runs" "$(cat "$F/boot.log")"
 grep -qx 'omarchy-mac-setup-keyboard 3' "$F/boot.log" && ! grep -q '^omarchy-mac-setup-keyboard [12]' "$F/boot.log" ||
   fail "mx-mac's history names the generated keyboard line" "$(grep keyboard "$F/boot.log")"
-grep -qx 'omarchy-drive-recover --arm' "$F/boot.log" || fail "an encrypted Mac's password reset is armed"
+! grep -q '^omarchy-drive-recover' "$F/boot.log" || fail "an encrypted Mac arms no password reset with a recovery key"
 [[ $(sed -n "$(grep -n '^omarchy-mac-setup-system' "$F/boot.log" | tail -n 1 | cut -d: -f1),\$p" "$F/boot.log" |
-  grep -E '^(omarchy-mac-setup-system|omarchy-mac-boot-update|omarchy-mac-setup-keyboard|omarchy-drive-recover|boot-check pending|systemctl enable omarchy-mac-migrate-verify)' | head -n 6 | cut -d' ' -f1 | tr '\n' '|') == \
-  "omarchy-mac-setup-system|omarchy-mac-boot-update|omarchy-mac-setup-keyboard|omarchy-drive-recover|boot-check|systemctl|" ]] ||
+  grep -E '^(omarchy-mac-setup-system|omarchy-mac-boot-update|omarchy-mac-setup-keyboard|boot-check pending|systemctl enable omarchy-mac-migrate-verify)' | head -n 5 | cut -d' ' -f1 | tr '\n' '|') == \
+  "omarchy-mac-setup-system|omarchy-mac-boot-update|omarchy-mac-setup-keyboard|boot-check|systemctl|" ]] ||
   fail "the repairs follow the Mac services, and the boot files are checked after them, before the reboot" "$(cat "$F/boot.log")"
 for user in tester other; do
   for name in $repaired_names; do
@@ -814,7 +814,7 @@ for user in tester other; do
   done
 done
 [[ ! -e $R/home/alarm/.local ]] || fail "an account Omarchy never ran for gets no records"
-pass "the engine removes the Broadcom block, retires alarm from wheel, sets the locale, runs Snapper, hands over the keyboard and arms the reset, and records those migrations as done"
+pass "the engine removes the Broadcom block, retires alarm from wheel, sets the locale, runs Snapper, and hands over the keyboard, and records those migrations as done"
 
 output=$(migrate run 2>&1) || fail "a second run succeeds" "$output"
 [[ $(grep -c '^omarchy-mac-boot-update' "$F/boot.log") == 1 && $(<"$R/etc/modprobe.d/brcmfmac.conf") == "options brcmfmac roamoff=1" ]] ||
@@ -838,9 +838,8 @@ grep -qx 'omarchy-mac-setup-keyboard 1' "$F/boot.log" || fail "quattro-upstream'
 [[ $(grep '^wheel:' "$R/etc/group") == "wheel:x:998:alarm,tester" ]] && ! grep -q '^gpasswd' "$F/boot.log" || fail "alarm stays in wheel while it is an Omarchy user"
 [[ -L $R/etc/modprobe.d/brcmfmac.conf && ! -s $R/etc/brcm/brcmfmac.conf ]] || fail "a linked Broadcom file is emptied through its link"
 [[ $(<"$R/etc/locale.conf") == "LANG=de_DE.UTF-8" ]] && ! grep -q '^locale-gen' "$F/boot.log" || fail "a chosen locale stays"
-! grep -q '^omarchy-drive-recover' "$F/boot.log" || fail "an unencrypted Mac arms no password reset"
-[[ -f $R/home/tester/.local/state/omarchy/migrations/1789148088.sh && -f $R/home/tester/.local/state/omarchy/migrations/1790380870.sh ]] ||
-  fail "a Snapper layout left for manual repair and an unencrypted root count as done"
+[[ -f $R/home/tester/.local/state/omarchy/migrations/1789148088.sh ]] ||
+  fail "a Snapper layout left for manual repair counts as done"
 [[ ! -e $R/home/tester/.local/state/omarchy/migrations/1789158179.sh ]] || fail "alarm's wheel membership is left to the runtime's migration where alarm uses Omarchy"
 pass "alarm as the Omarchy user, chosen locales, preserved Snapper layouts and unencrypted roots are left alone"
 
@@ -888,7 +887,7 @@ finish
 for name in 1789148088 1789146110; do
   [[ ! -e $R/home/tester/.local/state/omarchy/migrations/$name.sh ]] || fail "a repair that did not run leaves its migration to the runtime: $name"
 done
-for name in 1789158179 1789172112 1790327324 1790380870; do
+for name in 1789158179 1789172112 1790327324; do
   [[ -f $R/home/tester/.local/state/omarchy/migrations/$name.sh ]] || fail "the repairs that ran are recorded: $name"
 done
 grep -qx 'omarchy-mac-setup-keyboard 2' "$F/boot.log" || fail "without a fork's history the install leaf's fnmode=2 is the generated line"

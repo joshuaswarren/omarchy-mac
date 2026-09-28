@@ -403,6 +403,8 @@ TEST_KEYSLOTS="4 5" run luks-slots owner=4 recovery=5 || fail "luks-slots record
 state_is $'owner_slot=4\nrecovery_slot=5' "both slots are recorded"
 TEST_KEYSLOTS="4" run luks-slots owner=4 recovery= || fail "an empty recovery= records none" "$(cat "$test_tmp/err")"
 state_is 'owner_slot=4' "an empty recovery= drops the recovery slot"
+TEST_KEYSLOTS="6" run luks-slots owner=6 || fail "luks-slots records an owner-only disk" "$(cat "$test_tmp/err")"
+state_is 'owner_slot=6' "an owner-only disk keeps recording no recovery slot"
 pass "luks-slots records the owner's and the recovery slot the header holds, keeping the rest of encrypt.state"
 
 refused() {

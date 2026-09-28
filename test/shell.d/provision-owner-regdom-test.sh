@@ -21,7 +21,7 @@ calls=$tmp/calls
 mkdir -p "$stub_bin" "$omarchy/bin" "$omarchy/install/provisioning" "$omarchy/install/hardware"
 
 printf 'OMARCHY\n' >"$omarchy/logo.txt"
-cp "$ROOT/install/provisioning/luks-rekey.sh" "$ROOT/install/provisioning/luks-recovery.sh" "$omarchy/install/provisioning/"
+cp "$ROOT/install/provisioning/luks-rekey.sh" "$omarchy/install/provisioning/"
 ln -s "$ROOT/bin/omarchy-cmd-present" "$omarchy/bin/omarchy-cmd-present"
 sed -e "s|/etc/|$root/etc/|g" -e "s|/usr/share/zoneinfo|$root/usr/share/zoneinfo|g" \
   "$ROOT/install/hardware/set-wireless-regdom.sh" >"$omarchy/install/hardware/set-wireless-regdom.sh"
