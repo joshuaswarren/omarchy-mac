@@ -1291,9 +1291,18 @@ Item {
     // A top bar shorter than a panel's camera cutout leaves a sliver of every
     // window peeking out beside the camera, so the cutout is this panel's
     // minimum sensible top-bar height. An intentionally taller bar still wins.
-    readonly property int notchFloor: BarModel.notchFloor(root.displayCutouts, root.position, screen.name, screen.width, screen.height, screen.devicePixelRatio, Style.bar.notchHeight)
+    readonly property int notchFloor: BarModel.notchFloor(root.displayCutouts, root.position, screen.name, screen.width, screen.height, screen.devicePixelRatio, panelMode, Style.bar.notchHeight)
 
-    readonly property bool centerBesideRight: BarModel.centerBesideRight(root.displayCutouts, root.position, screen.name, screen.width, screen.height, screen.devicePixelRatio)
+    readonly property bool centerBesideRight: BarModel.centerBesideRight(root.displayCutouts, root.position, screen.name, screen.width, screen.height, screen.devicePixelRatio, panelMode)
+
+    // The physical mode, as hyprctl monitors reports it. Qt's whole-number
+    // devicePixelRatio can't rebuild it at a fractional scale.
+    readonly property var hyprMonitor: screen ? Hyprland.monitorFor(screen) : null
+    readonly property var panelMode: hyprMonitor ? ({
+      width: hyprMonitor.width,
+      height: hyprMonitor.height,
+      transform: hyprMonitor.lastIpcObject ? hyprMonitor.lastIpcObject.transform : 0
+    }) : null
 
     readonly property int thickness: root.vertical ? root.barSize : Math.max(root.barSize, notchFloor)
 
