@@ -1,0 +1,26 @@
+#!/usr/bin/perl
+# Prints "open" or "closed" for a laptop's lid, read from the kernel's lid
+# switch (EVIOCGSW) rather than logind: udev can add the Apple display card
+# before logind is up. Exits 1 when there is no lid switch or it can't be read.
+use strict;
+use warnings;
+
+my $sysfs = $ENV{OMARCHY_SYSFS} // '/sys';
+my $dev = $ENV{OMARCHY_DEV} // '/dev';
+my $EVIOCGSW = 0x8008451b;    # _IOC(_IOC_READ, 'E', 0x1b, 8)
+
+for my $caps (sort glob "$sysfs/class/input/input*/capabilities/sw") {
+  open my $in, '<', $caps or next;
+  my @words = split ' ', (<$in> // '');
+  next unless @words && hex($words[-1]) & 1;    # SW_LID is bit 0
+  (my $input = $caps) =~ s{/capabilities/sw$}{};
+  for my $event (sort glob "$input/event*") {
+    my ($name) = $event =~ m{/(event[0-9]+)$} or next;
+    open my $fh, '<', "$dev/input/$name" or next;
+    my $state = "\0" x 8;
+    ioctl($fh, $EVIOCGSW, $state) or next;
+    print((ord($state) & 1) ? "closed\n" : "open\n");
+    exit 0;
+  }
+}
+exit 1;

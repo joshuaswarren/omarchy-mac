@@ -7,7 +7,8 @@
 #               only while the splash runs, on a laptop whose lid is open
 #               (a shut lid, a desktop Mac or an unknown lid keeps them all)
 #   release     omarchy-mac-external-displays.service, after the splash quits
-#               and before the display manager: turns them back on
+#               and owner setup ends, before the display manager: turns them
+#               back on
 #
 # "off" and "detect" in a connector's status set and clear the kernel's force;
 # neither sends a uevent, so release sends each card a synthetic change that
@@ -22,7 +23,7 @@ set -uo pipefail
 sysfs=${OMARCHY_SYSFS:-/sys}
 state=${OMARCHY_MAC_DISPLAYS_STATE:-/run/omarchy-mac}
 plymouth=${OMARCHY_PLYMOUTH:-/usr/bin/plymouth}
-busctl=${OMARCHY_BUSCTL:-/usr/bin/busctl}
+lid_state=${OMARCHY_LID_STATE:-/usr/lib/omarchy/mac-boot/lid-state}
 held=$state/external-displays-held
 released=$state/external-displays-released
 
@@ -42,9 +43,7 @@ laptop() {
 }
 
 lid_open() {
-  [[ -x $busctl ]] &&
-    [[ $("$busctl" --timeout=2 get-property org.freedesktop.login1 /org/freedesktop/login1 \
-      org.freedesktop.login1.Manager LidClosed 2>/dev/null) == "b false" ]]
+  [[ -x $lid_state && $("$lid_state" 2>/dev/null) == open ]]
 }
 
 # The card's connectors register right after it; the built-in panel is one.
