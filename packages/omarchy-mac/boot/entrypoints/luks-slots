@@ -1,5 +1,8 @@
 #!/bin/bash -p
 
+# omarchy-lifecycle-dispatch luks-slots --owner prints the owner's recorded
+# slot, checked against the LUKS header, and changes nothing.
+#
 # omarchy-lifecycle-dispatch luks-slots owner=<slot> [recovery=<slot>]. Owner
 # provisioning runs this with an empty recovery= once the re-key keeps only the
 # owner's slot, and omarchy-drive-password after it changed the owner's key,
@@ -18,4 +21,9 @@ else
   MAC_BOOT_ROOT=${OMARCHY_MAC_BOOT_ROOT:-}
 fi
 source "$MAC_BOOT_ROOT/usr/lib/omarchy-mac/boot/provision.sh"
-record_luks_slots "$@"
+if [[ ${1:-} == --owner ]]; then
+  (( $# == 1 )) || refuse "luks-slots --owner takes no other arguments."
+  print_owner_slot
+else
+  record_luks_slots "$@"
+fi
