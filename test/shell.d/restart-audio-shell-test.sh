@@ -69,8 +69,8 @@ case $name in
     while [[ $1 == --* ]]; do shift; done
     exec "$@" ;;
   systemctl)
-    if [[ $2 == "show-environment" && -n ${SESSION_OMARCHY_PATH:-} ]]; then
-      echo "OMARCHY_PATH=$SESSION_OMARCHY_PATH"
+    if [[ $2 == "show-environment" && $3 == "--output=json" && -n ${SESSION_OMARCHY_PATH:-} ]]; then
+      jq -cn --arg path "$SESSION_OMARCHY_PATH" '{OMARCHY_PATH: $path}'
     elif [[ $2 == "restart" ]]; then
       [[ -n ${SIGNAL_DURING_RESTART:-} ]] && signal_script "$SIGNAL_DURING_RESTART"
       exit "${RESTART_STATUS:-0}"
@@ -213,10 +213,10 @@ done
 ! kill -0 "$inhibitor" 2>/dev/null || fail 'a killed restart does not leave sleep blocked'
 pass 'the sleep block never outlives the restart, even a killed one'
 
-run_case 1 SESSION_OMARCHY_PATH=/session/omarchy
-[[ -n $(line_of 'quickshell list -p /session/omarchy/shell --any-display -j') ]] ||
-  fail 'the running shell is found under the session path' "$(cat "$CALLS")"
-! grep -Fq 'omarchy-shell-path=/usr/share/omarchy' "$CALLS" && grep -Fq 'omarchy-shell-path=/session/omarchy' "$CALLS" ||
+run_case 1 'SESSION_OMARCHY_PATH=/session/dev checkout'
+[[ -n $(line_of 'quickshell list -p /session/dev checkout/shell --any-display -j') ]] ||
+  fail 'the running shell is found under the session path, spaces and all' "$(cat "$CALLS")"
+! grep -Fq 'omarchy-shell-path=/usr/share/omarchy' "$CALLS" && grep -Fxq 'omarchy-shell-path=/session/dev checkout' "$CALLS" ||
   fail 'the lock state is asked of the session shell' "$(cat "$CALLS")"
 pass 'a caller after a dev link or unlink still finds the session shell'
 

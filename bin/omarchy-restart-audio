@@ -6,7 +6,8 @@
 services=(wireplumber.service pipewire.service pipewire-pulse.service)
 # The running shell belongs to the session, which may disagree with a caller
 # opened after a dev link/unlink; omarchy-restart-shell resolves it the same way.
-session_omarchy_path=$(systemctl --user show-environment 2>/dev/null | sed -n 's/^OMARCHY_PATH=//p' | tail -n 1)
+# The plain listing shell-quotes values (a path with a space); JSON does not.
+session_omarchy_path=$(systemctl --user show-environment --output=json 2>/dev/null | jq -r '.OMARCHY_PATH // empty' 2>/dev/null)
 : "${session_omarchy_path:=$OMARCHY_PATH}"
 shell_config="$session_omarchy_path/shell"
 runtime_dir=${XDG_RUNTIME_DIR:-/run/user/$UID}
