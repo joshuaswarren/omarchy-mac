@@ -47,9 +47,18 @@ cat >"$work/bin/omarchy-state" <<'STUB'
 #!/bin/bash
 echo "state $*" >>"$CALLS"
 STUB
-cat >"$work/bin/omarchy-pkg-present" <<'STUB'
+cat >"$work/bin/omarchy-pkg-missing" <<'STUB'
 #!/bin/bash
-[[ ${AVD:-1} == 1 ]]
+[[ ${AVD:-1} == 0 ]]
+STUB
+cat >"$work/bin/omarchy-pkg-available" <<'STUB'
+#!/bin/bash
+[[ ${AVAILABLE:-1} == 1 ]]
+STUB
+cat >"$work/bin/omarchy-pkg-add" <<'STUB'
+#!/bin/bash
+echo "add $*" >>"$CALLS"
+exit "${PKG_STATUS:-0}"
 STUB
 cat >"$work/bin/lspci" <<'STUB'
 #!/bin/bash
@@ -97,20 +106,28 @@ APPLE=1 SETUP_STATUS=43 bash -euo pipefail "$ROOT/migrations/1789780917.sh" >/de
 APPLE=1 bash -euo pipefail "$ROOT/migrations/1789780917.sh" >/dev/null
 pass 'Apple-only acquisition and interrupted transition are retryable'
 
-# The packages the video decode and audio repairs installed come with
-# omarchy-mac now; each asks for the reboot that brings its stack up.
+# The video decode repair installs the decode defaults a Mac lacks and asks for
+# the reboot that brings the decoder up; the audio repair's packages come with
+# omarchy-mac.
 video=$ROOT/migrations/1789135902.sh audio=$ROOT/migrations/1789136142.sh
 for apple in 0 1; do
   for avd in 0 1; do
     : >"$CALLS"
     APPLE=$apple AVD=$avd bash -euo pipefail "$video" >/dev/null
-    if (( apple && avd )); then
-      [[ $(<"$CALLS") == "state set reboot-required" ]] || fail 'the decoder asks for a reboot once its packages are there' "$(cat "$CALLS")"
+    if (( apple && !avd )); then
+      [[ $(<"$CALLS") == $'add avd-fw libva-v4l2_request-avd\nstate set reboot-required' ]] ||
+        fail 'a Mac without the decode packages gets them and a reboot' "$(cat "$CALLS")"
     else
-      [[ ! -s $CALLS ]] || fail 'no reboot without the decode packages or off Apple Silicon' "$(cat "$CALLS")"
+      [[ ! -s $CALLS ]] || fail 'nothing to do with the decode packages there or off Apple Silicon' "$(cat "$CALLS")"
     fi
   done
 done
+: >"$CALLS"
+APPLE=1 AVD=0 AVAILABLE=0 bash -euo pipefail "$video" >/dev/null
+[[ ! -s $CALLS ]] || fail 'decode packages no repository offers are left out' "$(cat "$CALLS")"
+status=0
+APPLE=1 AVD=0 PKG_STATUS=45 bash -euo pipefail "$video" >/dev/null 2>&1 || status=$?
+(( status == 45 )) || fail 'a failed decode install keeps the migration pending'
 : >"$CALLS"
 APPLE=0 bash -euo pipefail "$audio" >/dev/null
 [[ ! -s $CALLS ]] || fail 'the audio repair does nothing off Apple Silicon' "$(cat "$CALLS")"

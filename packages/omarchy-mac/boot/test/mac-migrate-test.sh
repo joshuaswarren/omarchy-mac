@@ -695,7 +695,7 @@ user_unit omarchy-crash-watch.service graphical-session.target
 output=$(env OMARCHY_MAC_MIGRATE_KILL_MID=defaults OMARCHY_MAC_MIGRATE_ROOT="$R" MIGRATE_FIXTURE="$F" PATH="$stubs:$PATH" \
   "$R/usr/bin/omarchy-mac-migrate" run 2>&1) && fail "the run is killed in the middle of its defaults"
 grep -q "Installing the default packages a fresh install has: avd-fw libva-v4l2_request-avd" <<<"$output" || fail "the missing Apple defaults are named" "$output"
-grep -q "No repository carries these default packages, so they stay missing: .*vulkan-asahi" <<<"$output" ||
+grep -q "No repository carries these default packages, so they stay missing: .*widevine" <<<"$output" ||
   fail "defaults no repository carries are named, not fatal" "$output"
 finish
 [[ $(grep -c '^transaction avd-fw libva-v4l2_request-avd$' "$F/pacman.log") == 1 ]] ||

@@ -61,18 +61,13 @@ for platform in apple-silicon qualcomm generic-aarch64 generic; do
 done
 pass "each platform composes base, architecture and platform lists, and only Apple Silicon names Apple packages"
 
-# The Apple list goes by its platform's name, as upstream names it. Its older
-# name stays a link to it for anything on an installed system that still reads it.
+# The Apple list goes by its platform's name, as upstream names it; its older
+# name is gone.
 [[ -f $ROOT/install/omarchy-apple-silicon.packages && ! -L $ROOT/install/omarchy-apple-silicon.packages ]] ||
   fail "the Apple list is install/omarchy-apple-silicon.packages"
-[[ -L $ROOT/install/omarchy-apple.packages &&
-  $(readlink "$ROOT/install/omarchy-apple.packages") == omarchy-apple-silicon.packages ]] ||
-  fail "install/omarchy-apple.packages links to the Apple list"
-mkdir -p "$work/renamed/install"
-cp "$ROOT"/install/omarchy-{base,aarch64,apple-silicon}.packages "$work/renamed/install/"
-[[ $(OMARCHY_PATH="$work/renamed" omarchy-pkg-defaults apple-silicon) == "$(<"$work/apple-silicon.packages")" ]] ||
-  fail "Apple Silicon's set comes from omarchy-apple-silicon.packages, without the older name"
-pass "the Apple list is omarchy-apple-silicon.packages, and its older name links to it"
+[[ ! -e $ROOT/install/omarchy-apple.packages && ! -L $ROOT/install/omarchy-apple.packages ]] ||
+  fail "install/omarchy-apple.packages is gone"
+pass "the Apple list is omarchy-apple-silicon.packages, without its older name"
 
 ! omarchy-pkg-defaults riscv 2>/dev/null || fail "an unknown platform is refused"
 pass "an unknown platform is refused"
