@@ -6,18 +6,54 @@
 set -euo pipefail
 
 trusted_key=40DFB630FF42BCFFB047046CF0134EE680CAC571
+platform_keyrings_file=/usr/share/omarchy-platform/keyrings
 platform_keyrings=(archlinux-keyring)
-platform_rings=(archlinux)
 if omarchy-hw-apple-silicon; then
   platform_keyrings=(archlinuxarm-keyring)
-  platform_rings=(archlinuxarm)
-  # The [asahi-alarm] repository signs the Mac's kernel, firmware and audio
-  # packages with a key of its own.
-  if omarchy-pkg-present asahi-alarm-keyring; then
+  # A Mac whose omarchy-mac predates the platform's keyrings list.
+  if [[ ! -f $platform_keyrings_file ]] && omarchy-pkg-present asahi-alarm-keyring; then
     platform_keyrings+=(asahi-alarm-keyring)
-    platform_rings+=(asahi-alarm)
   fi
 fi
+
+# The platform package names the keyrings of the repositories it configures,
+# such as [asahi-alarm] on a Mac. Only installed ones are refreshed: this never
+# adds trust a machine didn't already have.
+if [[ -f $platform_keyrings_file ]]; then
+  while read -r keyring _ || [[ -n $keyring ]]; do
+    [[ -n $keyring && $keyring != \#* ]] || continue
+    if [[ ! $keyring =~ ^[a-z0-9][a-z0-9@._+-]*-keyring$ ]]; then
+      echo "Error: $platform_keyrings_file names an invalid keyring package: $keyring" >&2
+      exit 1
+    fi
+    if omarchy-pkg-present "$keyring" && [[ " ${platform_keyrings[*]} " != *" $keyring "* ]]; then
+      platform_keyrings+=("$keyring")
+    fi
+  done <"$platform_keyrings_file"
+fi
+
+# The rings a keyring package provides are the pacman-key import files it owns.
+keyring_rings() {
+  local package files file found
+
+  for package in "$@"; do
+    files=$(pacman -Qlq -- "$package") || return
+    found=0
+    while IFS= read -r file; do
+      if [[ $file =~ ^/usr/share/pacman/keyrings/([^/]+)\.gpg$ ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+        found=1
+      fi
+    done <<<"$files"
+    if (( ! found )); then
+      echo "Error: $package provides no pacman keyring" >&2
+      return 1
+    fi
+  done
+}
+
+rings=$(keyring_rings "${platform_keyrings[@]}")
+mapfile -t platform_rings <<<"$rings"
 
 # Restore installed trust and revocation metadata before fetching updates.
 sudo pacman-key --populate "${platform_rings[@]}"
@@ -39,6 +75,9 @@ sudo pacman-key --lsign-key "$trusted_key"
 # Keyring refresh precedes the full system upgrade. Reinstall even when the
 # version is unchanged, since key material can change without a version bump.
 echo "Update signing keys"
-sudo pacman -Sy --noconfirm omarchy-keyring "${platform_keyrings[@]}"
+sudo pacman -Sy --noconfirm -- omarchy-keyring "${platform_keyrings[@]}"
+# A new version can ship its keys under another ring name.
+rings=$(keyring_rings "${platform_keyrings[@]}")
+mapfile -t platform_rings <<<"$rings"
 sudo pacman-key --populate omarchy "${platform_rings[@]}"
 echo "Keys are correct"

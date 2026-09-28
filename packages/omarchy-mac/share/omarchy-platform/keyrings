@@ -1,0 +1,4 @@
+# Signing keyrings of the repositories a Mac adds to Arch Linux ARM's.
+# omarchy update reinstalls each installed one before the system upgrade, so a
+# key rotation there never fails the upgrade's signature checks.
+asahi-alarm-keyring
