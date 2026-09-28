@@ -32,9 +32,10 @@ resolved=$(omarchy-lifecycle-dispatch --resolve "$operation" 2>"$errors") || sta
 
 # 3: the platform's boot package is not installed at all. Such a machine
 # predates it and boots a chain the package does not manage, so verification
-# warns instead of failing every update until its migration installs it.
+# warns instead of failing every update until it is installed; the
+# dispatcher's message says how.
 if (( status == 3 )) && [[ $operation == "update-verify" ]]; then
-  echo -e "\e[33m\n$(sed 's/^Error: //' "$errors")\nThe boot files were not verified. This machine predates its platform's boot package; updates verify them once its migration installs it.\e[0m" >&2
+  echo -e "\e[33m\n$(sed 's/^Error: //' "$errors")\nThe boot files were not verified. This machine predates its platform's boot package; updates verify them once it is installed.\e[0m" >&2
 elif (( status != 0 )); then
   cat "$errors" >&2
   exit "$status"

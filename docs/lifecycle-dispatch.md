@@ -15,7 +15,7 @@ The first form runs the operation. `--resolve` prints the entrypoint the operati
 | --- | --- | --- |
 | The platform registers no package (`generic`, `generic-aarch64`, and `qualcomm` today) | no-op, exit 0 | prints nothing, exit 0 |
 | The entrypoint exists and passes the trust rules | execs it; its exit status is the result | prints its path |
-| A required operation has no entrypoint, and the package is not installed | exit 3 (an entrypoint's own status could also be 3; with `--resolve` it is only this): `Error: <operation> on <platform> needs <package>, which provides <path>; it is not installed` | same error |
+| A required operation has no entrypoint, and the package is not installed | exit 3 (an entrypoint's own status could also be 3; with `--resolve` it is only this): `Error: <operation> on <platform> needs <package>, which provides <path>; it is not installed (from Omarchy's repositories: sudo pacman -S --needed <package>)` | same error |
 | A required operation has no entrypoint, but the package is installed (its pacman record says so) | exit 1: `Error: <operation> on <platform> needs <path>, which <package> <version> does not provide; update <package>` | same error |
 | An optional operation has no entrypoint (every setup operation is optional, so none of them ever fails for a missing package) | no-op, exit 0 | prints nothing, exit 0 |
 | A user operation (`setup-user`) is run as root | exit 1: `Error: <operation> runs as the user being set up, never as root` | same error |

@@ -199,7 +199,8 @@ mkdir -p "$tmp/no-package"
 run_update apple-silicon "$tmp/no-package"
 (( status == 0 )) && ran omarchy-update-system-pkgs && ran omarchy-update-restart ||
   fail "apple: without omarchy-mac-boot the update finishes and offers the reboot" "status $status: $(cat "$tmp/err")"
-grep -Fq "update-verify on apple-silicon needs omarchy-mac-boot" "$tmp/err" && grep -Fq "The boot files were not verified" "$tmp/err" ||
+grep -Fq "update-verify on apple-silicon needs omarchy-mac-boot" "$tmp/err" && grep -Fq "The boot files were not verified" "$tmp/err" &&
+  grep -Fq "sudo pacman -S --needed omarchy-mac-boot" "$tmp/err" ||
   fail "apple: without omarchy-mac-boot the update says the boot files were not verified" "$(cat "$tmp/err")"
 [[ ! -s $tmp/sudo ]] || fail "apple: without omarchy-mac-boot nothing asks for root" "$(cat "$tmp/sudo")"
 pass "apple: without omarchy-mac-boot the update warns that the boot files were not verified"
