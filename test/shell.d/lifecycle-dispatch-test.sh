@@ -98,7 +98,7 @@ for operation in "${operations[@]}"; do
       fail "apple: optional $operation resolves to nothing without the boot package" "$output"
   else
     (( status == 3 )) || fail "apple: required $operation fails with status 3 without the boot package" "status: $status"
-    [[ $output == "Error: $operation on apple-silicon needs omarchy-mac-boot, which provides /usr/lib/omarchy/mac-boot/$operation; it is not installed" ]] ||
+    [[ $output == "Error: $operation on apple-silicon needs omarchy-mac-boot, which provides /usr/lib/omarchy/mac-boot/$operation; it is not installed (to move this machine onto it: sudo omarchy-mac-migrate-bootstrap)" ]] ||
       fail "apple: required $operation names the missing package and entrypoint" "$output"
     status=0
     on apple-silicon "$empty" --resolve "$operation" >/dev/null 2>&1 || status=$?

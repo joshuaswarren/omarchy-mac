@@ -103,6 +103,7 @@ fi
 # registration table in docs/lifecycle-dispatch.md.
 # /usr/lib/omarchy/mac-boot/limine-ready already lives in that directory as a
 # boot hook, not an operation: entrypoints are added beside it.
+install_hint=""
 case $platform:$operation in
   apple-silicon:setup-system | apple-silicon:setup-user)
     implementation=/usr/lib/omarchy/mac
@@ -112,6 +113,10 @@ case $platform:$operation in
   apple-silicon:*)
     implementation=/usr/lib/omarchy/mac-boot
     package=omarchy-mac-boot
+    # A Mac without any omarchy-mac-boot runs a fork's or a tester's install,
+    # whose repositories must not supply it; the bootstrap fetches the official
+    # one, checks its signature and moves the Mac onto it.
+    install_hint="sudo omarchy-mac-migrate-bootstrap"
     required=(
       provision-prepare provision-commit provision-verify
       reset-prepare reset-verify reset-commit reset-rollback
@@ -166,7 +171,7 @@ if [[ ! -e $entrypoint && ! -L $entrypoint ]]; then
       echo "Error: $operation on $platform needs $implementation/$operation, which $package $version does not provide; update $package" >&2
       exit 1
     fi
-    echo "Error: $operation on $platform needs $package, which provides $implementation/$operation; it is not installed" >&2
+    echo "Error: $operation on $platform needs $package, which provides $implementation/$operation; it is not installed${install_hint:+ (to move this machine onto it: $install_hint)}" >&2
     exit 3
   fi
   exit 0
