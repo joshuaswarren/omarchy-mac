@@ -11,7 +11,7 @@ platform_keyrings=(archlinux-keyring)
 if omarchy-hw-apple-silicon; then
   platform_keyrings=(archlinuxarm-keyring)
   # A Mac whose omarchy-mac predates the platform's keyrings list.
-  if [[ ! -e $platform_keyrings_file ]] && omarchy-pkg-present asahi-alarm-keyring; then
+  if [[ ! -f $platform_keyrings_file ]] && omarchy-pkg-present asahi-alarm-keyring; then
     platform_keyrings+=(asahi-alarm-keyring)
   fi
 fi
@@ -19,7 +19,7 @@ fi
 # The platform package names the keyrings of the repositories it configures,
 # such as [asahi-alarm] on a Mac. Only installed ones are refreshed: this never
 # adds trust a machine didn't already have.
-if [[ -e $platform_keyrings_file ]]; then
+if [[ -f $platform_keyrings_file ]]; then
   while read -r keyring _ || [[ -n $keyring ]]; do
     [[ -n $keyring && $keyring != \#* ]] || continue
     if [[ ! $keyring =~ ^[a-z0-9][a-z0-9@._+-]*-keyring$ ]]; then
@@ -39,12 +39,12 @@ keyring_rings() {
   for package in "$@"; do
     files=$(pacman -Qlq -- "$package") || return
     found=0
-    for file in $files; do
+    while IFS= read -r file; do
       if [[ $file =~ ^/usr/share/pacman/keyrings/([^/]+)\.gpg$ ]]; then
         printf '%s\n' "${BASH_REMATCH[1]}"
         found=1
       fi
-    done
+    done <<<"$files"
     if (( ! found )); then
       echo "Error: $package provides no pacman keyring" >&2
       return 1
