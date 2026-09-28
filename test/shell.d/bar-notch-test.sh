@@ -44,6 +44,7 @@ assertEqual(bar.cutoutTop(pro16, 'eDP-1', 2592, 1676, 2, mode(3456, 2234)), 48, 
 assertEqual(bar.notchFloor(pro16, 'top', 'eDP-1', 2592, 1676, 2, mode(3456, 2234), 0), 48, 'a top bar at a fractional scale floors at the cutout')
 assertEqual(bar.centerBesideRight(pro16, 'top', 'eDP-1', 2592, 1676, 2, mode(3456, 2234)), true, 'a top bar at a fractional scale moves the center section')
 assertEqual(bar.cutoutTop(cutouts, 'eDP-1', 1890, 1228, 2, mode(3024, 1964)), 40, 'scale 1.6 matches too')
+assertEqual(bar.cutoutTop(pro16, 'eDP-1', 2765, 1787, 2, mode(3456, 2234)), 52, 'a scale that splits a row rounds the floor up to cover the cutout')
 
 // Until Hyprland answers, the logical size times Qt's ratio stands in for the
 // mode, which holds at whole scales only.
