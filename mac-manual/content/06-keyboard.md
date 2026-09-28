@@ -29,7 +29,7 @@ On Macs with an ambient light sensor, the keyboard backlight follows the room: l
 
 ## Trackpad
 
-The built-in trackpad scrolls naturally, as in macOS, and tap-to-click is off, because a palm brushing the trackpad while typing would otherwise click. Click by pressing the trackpad. Tapping is off for every touchpad on a Mac, an external one included. Change either in the `touchpad` section of `~/.config/hypr/input.lua`, as [Keyboard, mouse, trackpad](https://omarchy.org/manual/keyboard-mouse-trackpad/) describes; a value you set yourself is kept. To tap to click:
+The built-in trackpad scrolls naturally, as in macOS, and tap-to-click is off, because a palm brushing the trackpad while typing would otherwise click. Click by pressing the trackpad. Tapping is off for every touchpad on a Mac, an external one included. Change either in the `touchpad` section of `~/.config/hypr/input.lua`, as [Keyboard, mouse, trackpad](https://omarchy.org/manual/keyboard-mouse-trackpad/) describes; a value you set yourself is kept. To tap to click, set `tap_to_click = true` there (setup writes `tap_to_click = false` into that file on a new install), or add this line at the end of the file:
 
 ```lua
 hl.config({ input = { touchpad = { tap_to_click = true } } })
