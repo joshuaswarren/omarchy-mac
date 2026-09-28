@@ -52,7 +52,17 @@ case $name in
     # the time slept.
     if [[ -e $STATE/offset ]]; then awk -v slept="${SUSPEND:-0}" 'BEGIN { print 5.25 + slept }'; else echo 5.25; fi
     touch "$STATE/offset" ;;
-  systemd-inhibit) ;;
+  systemd-inhibit)
+    # logind lists a block once it holds it; the inhibitor keeps it while it runs.
+    if [[ $1 == "--list" ]]; then
+      [[ -e $STATE/inhibitor ]] || /usr/bin/sleep 0.05
+      [[ -e $STATE/inhibitor ]] &&
+        printf 'omarchy-restart-audio 1000 user %s systemd-inhibit sleep The Omarchy shell is stopped block\n' "$(cat "$STATE/inhibitor")"
+      exit 0
+    fi
+    [[ ${INHIBIT_FAIL:-0} == 1 ]] && exit 1
+    echo $$ >"$STATE/inhibitor"
+    exec /usr/bin/sleep 30 ;;
   systemctl)
     if [[ $2 == "restart" ]]; then
       [[ -n ${SIGNAL_DURING_RESTART:-} ]] && signal_script "$SIGNAL_DURING_RESTART"
@@ -106,16 +116,18 @@ run_case 1
 (( status == 0 )) || fail 'an unlocked restart succeeds' "$(cat "$work/output")"
 kill_at=$(line_of "$kill_line")
 restart_at=$(line_of "$restart_line")
-status_at=$(grep -nFx 'wpctl status' "$CALLS" | tail -n 1 | cut -d: -f1)
 start_at=$(line_of 'omarchy-restart-shell ')
+status_at=$(grep -nFx 'wpctl status' "$CALLS" | tail -n 1 | cut -d: -f1)
 [[ -n $kill_at && -n $restart_at && -n $status_at && -n $start_at ]] || fail 'every step of an unlocked restart runs' "$(cat "$CALLS")"
-(( kill_at < restart_at && restart_at < status_at && status_at < start_at )) ||
-  fail 'the shell stops before audio goes away and starts once audio answers' "$(cat "$CALLS")"
+(( kill_at < restart_at && restart_at < start_at && start_at < status_at )) ||
+  fail 'the shell is stopped only while the audio services restart' "$(cat "$CALLS")"
 (( $(count_of 'quickshell kill') == 1 && $(count_of 'omarchy-restart-shell') == 1 )) || fail 'the shell stops and starts once' "$(cat "$CALLS")"
 (( $(count_of 'omarchy-shell lock lock') == 0 )) || fail 'an unlocked restart without a suspend does not lock the screen'
 inhibit_at=$(line_of 'systemd-inhibit --what=sleep --mode=block --who=omarchy-restart-audio --why=The Omarchy shell is stopped while audio restarts sleep infinity')
-[[ -n $inhibit_at ]] && (( inhibit_at < kill_at )) || fail 'sleep is blocked before the shell stops' "$(cat "$CALLS")"
-pass 'audio restarts with the shell stopped, and the shell comes back once audio answers'
+listed_at=$(line_of 'systemd-inhibit --list --no-legend --no-pager')
+[[ -n $inhibit_at && -n $listed_at ]] && (( inhibit_at < kill_at && listed_at < kill_at )) ||
+  fail 'logind holds the sleep block before the shell stops' "$(cat "$CALLS")"
+pass 'the shell is stopped only while the audio services restart'
 
 for setting in SESSION_LOCKED=0 SESSION_LOCKED=2 'LOCK_STATUS={"secure":true,"requested":false}' \
   'LOCK_STATUS={"secure":false,"requested":true}' 'LOCK_STATUS=garbage' 'LOCK_STATUS={}' LOCK_STATUS=fail; do
@@ -141,6 +153,12 @@ run_case 1 LIST_FAIL=1
 (( status == 1 && $(count_of 'systemctl') == 0 && $(count_of 'quickshell kill') == 0 )) ||
   fail 'an unknown shell state refuses the restart' "$(cat "$CALLS")"
 pass 'audio does not restart when Quickshell cannot tell whether the shell runs'
+
+run_case 1 INHIBIT_FAIL=1
+(( status == 1 && $(count_of 'quickshell kill') == 0 && $(count_of 'systemctl') == 0 && $(count_of 'omarchy-restart-shell') == 0 )) ||
+  fail 'the shell is never stopped without sleep blocked' "$(cat "$CALLS")"
+grep -Fq 'sleep could not be blocked' "$work/output" || fail 'the refusal says sleep could not be blocked' "$(cat "$work/output")"
+pass 'the shell is never stopped unless logind holds the sleep block'
 
 run_case 1 SHELL_STUCK=1
 (( status == 1 )) || fail 'a shell that will not stop refuses the restart'
