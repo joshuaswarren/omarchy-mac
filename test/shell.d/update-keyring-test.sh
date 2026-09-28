@@ -63,7 +63,7 @@ chmod +x "$stub_bin/omarchy-pkg-missing"
 cat >"$stub_bin/omarchy-pkg-present" <<'SH'
 #!/bin/bash
 
-[[ $* == "archlinuxarm-keyring" && ${KEYRING_TEST_ARM:-0} == 1 ]]
+[[ ($* == "archlinuxarm-keyring" && ${KEYRING_TEST_ARM:-0} == 1) || " ${KEYRING_TEST_INSTALLED:-} " == *" $* "* ]]
 SH
 chmod +x "$stub_bin/omarchy-pkg-present"
 
@@ -82,11 +82,17 @@ exit 0
 SH
 chmod +x "$stub_bin/omarchy-pkg-add"
 
+# The platform's keyrings list is read at a fixed path; the test runs a copy
+# rewritten to read a fixture there.
+platform_keyrings="$test_tmp/platform-keyrings"
+sed "s|/usr/share/omarchy-platform/keyrings|$platform_keyrings|" "$ROOT/bin/omarchy-update-keyring" >"$test_tmp/omarchy-update-keyring"
+chmod +x "$test_tmp/omarchy-update-keyring"
+
 run_keyring() {
   KEYRING_TEST_LOG="$log_file" \
     KEYRING_TEST_DIR="$test_tmp" \
     PATH="$stub_bin:$PATH" \
-    "$ROOT/bin/omarchy-update-keyring" "$@"
+    "$test_tmp/omarchy-update-keyring" "$@"
 }
 
 # Everything healthy: the key and package are present, the reinstall works.
@@ -118,6 +124,31 @@ KEYRING_TEST_ARM=1 run_keyring >"$test_tmp/x86.out"
 grep -Eq $'^sudo\tpacman\t-Sy\t--noconfirm\tarchlinux-keyring$' "$log_file" ||
   fail "x86 reinstalls only Arch's keyring, even with Arch Linux ARM's installed" "$(cat "$log_file")"
 pass "aarch64 machines also reinstall Arch Linux ARM's keyring where it is installed, x86 never"
+
+# The platform package's list adds the installed keyrings it names: Apple
+# Silicon's [asahi-alarm], with no platform branch here.
+printf '%s\n' '# Asahi' '' asahi-alarm-keyring archlinuxarm-keyring other-keyring asahi-alarm-keyring >"$platform_keyrings"
+printf 'asahi-alarm-keyring' >>"$platform_keyrings"
+: >"$log_file"
+rm -f "$test_tmp/list-calls"
+KEYRING_TEST_ARM=1 KEYRING_TEST_PLATFORM=apple-silicon KEYRING_TEST_INSTALLED=asahi-alarm-keyring run_keyring >"$test_tmp/platform.out"
+grep -Eq $'^sudo\tpacman\t-Sy\t--noconfirm\tarchlinux-keyring\tarchlinuxarm-keyring\tasahi-alarm-keyring$' "$log_file" ||
+  fail "update-keyring reinstalls the installed keyrings the platform names, once each" "$(cat "$log_file")"
+pass "update-keyring reinstalls the installed keyrings the platform names, once each"
+
+for listed in 'asahi-alarm-keyring;reboot' '../asahi-alarm-keyring' 'asahi-alarm' '-Syu-keyring' 'asahi-alarm-keyring extra'; do
+  printf '%s\n%s\n' "$listed" asahi-alarm-keyring >"$platform_keyrings"
+  : >"$log_file"
+  rm -f "$test_tmp/list-calls"
+  KEYRING_TEST_INSTALLED=asahi-alarm-keyring run_keyring >"$test_tmp/invalid.out" 2>&1 ||
+    fail "update-keyring carries on past a platform list line naming $listed" "$(cat "$test_tmp/invalid.out")"
+  grep -qF "skipping $listed" "$test_tmp/invalid.out" ||
+    fail "update-keyring warns about $listed" "$(cat "$test_tmp/invalid.out")"
+  grep -Eq $'^sudo\tpacman\t-Sy\t--noconfirm\tarchlinux-keyring\tasahi-alarm-keyring$' "$log_file" ||
+    fail "update-keyring skips $listed and still reinstalls the valid keyrings, and nothing else" "$(cat "$log_file")"
+done
+rm -f "$platform_keyrings"
+pass "update-keyring skips a platform list line naming anything but a keyring package, with a warning"
 
 # Key and package missing: the full populate path runs and verifies at the end.
 : >"$log_file"
