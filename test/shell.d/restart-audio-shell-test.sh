@@ -2,9 +2,10 @@
 set -euo pipefail
 source "$(dirname "$0")/base-test.sh"
 require_command jq
+require_command flock
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-mkdir "$work/bin" "$work/state"
+mkdir "$work/bin" "$work/state" "$work/home" "$work/runtime"
 
 # One stub for every command the restart touches. The shell, the lock screen
 # and the clocks keep their state in $STATE so a case can follow them through.
@@ -47,9 +48,11 @@ case $name in
       lock) touch "$STATE/locked" ;;
     esac ;;
   python3)
-    # A suspend shows as CLOCK_BOOTTIME pulling ahead of CLOCK_MONOTONIC.
-    if [[ ${SUSPEND:-0} == 1 && -e $STATE/offset ]]; then echo 65.25; else echo 5.25; fi
+    # A suspend shows as CLOCK_BOOTTIME pulling ahead of CLOCK_MONOTONIC by
+    # the time slept.
+    if [[ -e $STATE/offset ]]; then awk -v slept="${SUSPEND:-0}" 'BEGIN { print 5.25 + slept }'; else echo 5.25; fi
     touch "$STATE/offset" ;;
+  systemd-inhibit) ;;
   systemctl)
     if [[ $2 == "restart" ]]; then
       [[ -n ${SIGNAL_DURING_RESTART:-} ]] && signal_script "$SIGNAL_DURING_RESTART"
@@ -62,10 +65,12 @@ exit 0
 STUB
 chmod +x "$work/bin/fixture"
 for name in quickshell omarchy-restart-shell omarchy-hyprland-session-locked omarchy-shell python3 systemctl wpctl sleep \
-  omarchy-hw-apple-silicon omarchy-cmd-present; do
+  systemd-inhibit omarchy-hw-apple-silicon omarchy-cmd-present; do
   ln -s fixture "$work/bin/$name"
 done
-export CALLS="$work/calls" STATE="$work/state" PATH="$work/bin:$PATH" OMARCHY_PATH=/usr/share/omarchy
+# Recovery that finds audio still down edits WirePlumber state under HOME.
+export CALLS="$work/calls" STATE="$work/state" PATH="$work/bin:$PATH" OMARCHY_PATH=/usr/share/omarchy \
+  HOME="$work/home" XDG_STATE_HOME="$work/home/.local/state" XDG_RUNTIME_DIR="$work/runtime"
 
 # run_case <running shell instances> [VAR=value...]; sets $status.
 run_case() {
@@ -108,10 +113,12 @@ start_at=$(line_of 'omarchy-restart-shell ')
   fail 'the shell stops before audio goes away and starts once audio answers' "$(cat "$CALLS")"
 (( $(count_of 'quickshell kill') == 1 && $(count_of 'omarchy-restart-shell') == 1 )) || fail 'the shell stops and starts once' "$(cat "$CALLS")"
 (( $(count_of 'omarchy-shell lock lock') == 0 )) || fail 'an unlocked restart without a suspend does not lock the screen'
+inhibit_at=$(line_of 'systemd-inhibit --what=sleep --mode=block --who=omarchy-restart-audio --why=The Omarchy shell is stopped while audio restarts sleep infinity')
+[[ -n $inhibit_at ]] && (( inhibit_at < kill_at )) || fail 'sleep is blocked before the shell stops' "$(cat "$CALLS")"
 pass 'audio restarts with the shell stopped, and the shell comes back once audio answers'
 
 for setting in SESSION_LOCKED=0 SESSION_LOCKED=2 'LOCK_STATUS={"secure":true,"requested":false}' \
-  'LOCK_STATUS={"secure":false,"requested":true}' 'LOCK_STATUS=garbage'; do
+  'LOCK_STATUS={"secure":false,"requested":true}' 'LOCK_STATUS=garbage' 'LOCK_STATUS={}' LOCK_STATUS=fail; do
   run_case 1 "$setting"
   (( status == 1 )) || fail "a locked or unknown screen refuses the restart: $setting" "$(cat "$work/output")"
   (( $(count_of 'systemctl') == 0 && $(count_of 'quickshell kill') == 0 && $(count_of 'omarchy-restart-shell') == 0 )) ||
@@ -121,9 +128,14 @@ for setting in SESSION_LOCKED=0 SESSION_LOCKED=2 'LOCK_STATUS={"secure":true,"re
 done
 pass 'a locked, locking or unknown screen is never left to a crashing shell'
 
-run_case 1 LOCK_STATUS=fail
-(( status == 0 && $(count_of 'quickshell kill') == 1 )) || fail 'a shell that does not answer holds no lock to lose' "$(cat "$CALLS")"
-pass 'a shell that answers no lock query holds no lock to lose'
+exec {held}>>"$work/runtime/omarchy-audio-repair.lock"
+flock "$held"
+run_case 1
+exec {held}>&-
+(( status == 1 && $(count_of 'systemctl') == 0 && $(count_of 'quickshell kill') == 0 )) ||
+  fail 'a repair already running holds audio and the shell' "$(cat "$CALLS")"
+grep -Fq 'another audio repair is running' "$work/output" || fail 'the refusal names the running repair' "$(cat "$work/output")"
+pass 'one audio repair at a time, shared with the Apple audio watchdog'
 
 run_case 1 LIST_FAIL=1
 (( status == 1 && $(count_of 'systemctl') == 0 && $(count_of 'quickshell kill') == 0 )) ||
@@ -143,13 +155,17 @@ pass 'the shell comes back even when audio does not'
 
 run_case 1 RESTART_SHELL_STATUS=1
 (( $(count_of 'omarchy-restart-shell') == 3 )) || fail 'a failed shell start is retried a bounded number of times' "$(cat "$CALLS")"
-pass 'a failed shell start is retried three times'
+(( status == 1 )) && grep -Fq 'did not come back' "$work/output" || fail 'a shell that never came back fails the restart' "$status $(cat "$work/output")"
+pass 'a failed shell start is retried three times, then reported'
 
-run_case 1 SUSPEND=1
-lock_at=$(line_of 'omarchy-shell lock lock')
-start_at=$(line_of 'omarchy-restart-shell ')
-[[ -n $lock_at ]] && (( start_at < lock_at )) || fail 'a suspend while the shell was down locks the screen' "$(cat "$CALLS")"
-pass 'a suspend while the shell was down locks the screen once it is back'
+for slept in 60 1; do
+  run_case 1 SUSPEND=$slept
+  lock_at=$(line_of 'omarchy-shell lock lock')
+  start_at=$(line_of 'omarchy-restart-shell ')
+  [[ -n $lock_at ]] && (( start_at < lock_at && status == 0 )) ||
+    fail "a ${slept}s suspend while the shell was down locks the screen" "$(cat "$CALLS")"
+done
+pass 'any suspend while the shell was down locks the screen once it is back'
 
 run_case 1 SIGNAL_DURING_RESTART=TERM
 (( status == 143 && $(count_of 'omarchy-restart-shell') == 1 )) || fail 'an interrupted restart brings the shell back' "$status $(cat "$CALLS")"

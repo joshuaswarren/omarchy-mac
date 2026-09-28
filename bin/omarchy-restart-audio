@@ -5,13 +5,28 @@
 
 services=(wireplumber.service pipewire.service pipewire-pulse.service)
 shell_config="$OMARCHY_PATH/shell"
+runtime_dir=${XDG_RUNTIME_DIR:-/run/user/$UID}
 suspend_offset_before=""
+sleep_inhibitor=""
 
 # Quickshell 0.3.1 on Qt 6.11 can crash when PipeWire or WirePlumber goes away
 # under it (a delegate model reads a PipeWire node already deleted), and its
 # crash handler brings the shell back with a crash report window and the
 # screen locked. So audio restarts only while the screen is unlocked, with
 # the shell stopped first and started again once audio is back.
+
+# One audio repair at a time, shared with the Apple audio watchdog: another
+# restart could find the shell stopped for this one and restart audio again
+# after it came back.
+take_repair_lock() {
+  mkdir -p "$runtime_dir"
+  exec {repair_lock}>>"$runtime_dir/omarchy-audio-repair.lock"
+
+  if ! flock -n "$repair_lock"; then
+    echo "Not restarting audio: another audio repair is running. Try again in a minute." >&2
+    exit 1
+  fi
+}
 
 # Prints the number of running shell instances, or fails if Quickshell cannot
 # tell. With none running, Quickshell answers in prose, even with -j.
@@ -27,7 +42,8 @@ shell_instances() {
   fi
 }
 
-# Prints why the shell must not be stopped now, or nothing if it may be.
+# Prints why the shell must not be stopped now, or nothing if it may be. Only
+# a shell that says the screen is neither locked nor locking may be stopped.
 shell_stop_blocker() {
   local status
   local state
@@ -39,10 +55,13 @@ shell_stop_blocker() {
     *) echo "the lock state is unknown"; return ;;
   esac
 
-  # The compositor holds no lock and no shell answers to take one: there is no
-  # locker to lose.
-  status=$(OMARCHY_SHELL_IPC_TIMEOUT=3s omarchy-shell lock status 2>/dev/null) || return 0
-  state=$(jq -r 'if type == "object" and (.secure | not) and (.requested | not) then "unlocked" else "locked" end' <<<"$status" 2>/dev/null)
+  status=$(OMARCHY_SHELL_IPC_TIMEOUT=3s omarchy-shell lock status 2>/dev/null)
+  state=$(jq -r '
+    if type != "object" then "unknown"
+    elif .secure == true or .requested == true then "locked"
+    elif .secure == false and .requested == false then "unlocked"
+    else "unknown"
+    end' <<<"$status" 2>/dev/null)
 
   case $state in
     unlocked) ;;
@@ -68,16 +87,32 @@ suspend_offset() {
   python3 -c 'import time; print(time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic())'
 }
 
-# Without a shell nothing could lock the screen for a suspend in between, so
-# ask the fresh shell until it reports the lock taken.
+# Nothing can lock the screen while the shell is stopped. Closing the lid
+# still suspends (logind ignores inhibitors for it by default), which the
+# offset check in start_shell catches.
+block_sleep() {
+  systemd-inhibit --what=sleep --mode=block --who=omarchy-restart-audio \
+    --why="The Omarchy shell is stopped while audio restarts" \
+    sleep infinity >/dev/null 2>&1 {repair_lock}>&- &
+  sleep_inhibitor=$!
+}
+
+# Asks the fresh shell to lock until it reports the lock secure; a fresh shell
+# may refuse early requests while its lock plugin loads.
 lock_screen() {
   local deadline=$((SECONDS + 30))
-  local locking
+  local state
 
   while (( SECONDS < deadline )); do
-    locking=$(OMARCHY_SHELL_IPC_TIMEOUT=3s omarchy-shell lock status 2>/dev/null | jq -r '.secure or .requested' 2>/dev/null)
-    [[ $locking == "true" ]] && return 0
-    OMARCHY_SHELL_IPC_TIMEOUT=3s omarchy-shell lock lock >/dev/null 2>&1
+    state=$(OMARCHY_SHELL_IPC_TIMEOUT=3s omarchy-shell lock status 2>/dev/null |
+      jq -r 'if .secure == true then "secure" elif .requested == true then "locking" else "idle" end' 2>/dev/null)
+
+    case $state in
+      secure) return 0 ;;
+      locking) ;;
+      *) OMARCHY_SHELL_IPC_TIMEOUT=3s omarchy-shell lock lock >/dev/null 2>&1 ;;
+    esac
+
     sleep 0.5
   done
 
@@ -87,21 +122,34 @@ lock_screen() {
 start_shell() {
   local attempt
   local offset
+  local started=1
 
   for (( attempt = 0; attempt < 3; attempt++ )); do
-    omarchy-restart-shell && break
+    omarchy-restart-shell && started=0 && break
     sleep 2
   done
 
   offset=$(suspend_offset)
-  if awk -v before="$suspend_offset_before" -v after="$offset" 'BEGIN { exit !(after - before > 5) }'; then
-    lock_screen || echo "The screen could not be locked after a suspend during the audio restart." >&2
+  if ! awk -v before="$suspend_offset_before" -v after="$offset" 'BEGIN { exit !(after - before < 0.5) }'; then
+    if ! lock_screen; then
+      echo "The screen could not be locked after a suspend during the audio restart." >&2
+      started=1
+    fi
   fi
+
+  return $started
 }
 
 bring_back_shell() {
+  local status=$?
+
   trap '' INT TERM HUP
-  start_shell
+  if ! start_shell; then
+    echo "The Omarchy shell did not come back; run omarchy-restart-shell." >&2
+    (( status == 0 )) && status=1
+  fi
+  [[ -n $sleep_inhibitor ]] && kill "$sleep_inhibitor" 2>/dev/null
+  exit "$status"
 }
 
 prepare_shell() {
@@ -121,12 +169,13 @@ prepare_shell() {
     exit 1
   fi
 
-  suspend_offset_before=$(suspend_offset)
   # Closing the terminal must not strand the desktop without its shell.
   trap bring_back_shell EXIT
   trap '' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
+  block_sleep
+  suspend_offset_before=$(suspend_offset)
 
   echo -e "Stopping the Omarchy shell while audio restarts...\n"
   if ! stop_shell; then
@@ -340,6 +389,7 @@ if omarchy-hw-apple-silicon && omarchy-cmd-present omarchy-audio-asahi-mic-map; 
     echo "Could not save microphone mapping gain before audio recovery." >&2
   fi
 fi
+take_repair_lock
 prepare_shell
 restart_audio_services || true
 

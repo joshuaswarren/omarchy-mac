@@ -25,7 +25,9 @@ chmod +x "$work/bin/fixture"
 for name in omarchy-cmd-present omarchy-hw-apple-silicon omarchy-audio-asahi-mic-map systemctl wpctl sleep quickshell; do
   ln -s fixture "$work/bin/$name"
 done
-export CALLS="$work/calls" PATH="$work/bin:$PATH" OMARCHY_PATH=/usr/share/omarchy
+mkdir "$work/home" "$work/runtime"
+export CALLS="$work/calls" PATH="$work/bin:$PATH" OMARCHY_PATH=/usr/share/omarchy \
+  HOME="$work/home" XDG_STATE_HOME="$work/home/.local/state" XDG_RUNTIME_DIR="$work/runtime"
 run_case() {
   : >"$CALLS"
   env "$@" "$ROOT/bin/omarchy-restart-audio" >"$work/output" 2>&1
