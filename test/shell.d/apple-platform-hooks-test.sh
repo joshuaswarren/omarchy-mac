@@ -14,10 +14,25 @@ require_command node
 # behaves the same.
 
 tmpdir=$(mktemp -d)
+# A versioned LUA_INIT would take precedence over the platform root seam.
+unset LUA_INIT LUA_INIT_5_5 LUA_INIT_5_4
 trap 'rm -rf "$tmpdir"' EXIT
 runtime=${OMARCHY_TEST_RUNTIME:-$ROOT}
 "$ROOT/packages/omarchy-mac/install" "$tmpdir/pkg" >/dev/null
-packaged=$tmpdir/pkg/usr/share/omarchy
+packaged=$tmpdir/pkg
+platform_root=$packaged/usr/share/omarchy-platform
+
+# A runtime with the fixed platform root reads omarchy-mac's files from
+# /usr/share/omarchy-platform, which its test seam (platform-root.lua through
+# LUA_INIT) moves to a staged root; an older runtime reads the copies omarchy-mac
+# also stages in its tree, through OMARCHY_PACKAGED_PATH.
+if [[ -f $runtime/test/shell.d/platform-root.lua ]]; then
+  platform_env() { printf '%s\n' "LUA_INIT=@$runtime/test/shell.d/platform-root.lua" "OMARCHY_TEST_PLATFORM_ROOT=$1/usr/share/omarchy-platform"; }
+  key_names_path=/usr/share/omarchy-platform/key-names
+else
+  platform_env() { printf '%s\n' "OMARCHY_PACKAGED_PATH=$1/usr/share/omarchy"; }
+  key_names_path=default/omarchy/platform/key-names
+fi
 
 mkdir -p "$tmpdir/apple-bin" "$tmpdir/other-bin"
 printf '#!/bin/sh\nexit 0\n' >"$tmpdir/apple-bin/omarchy-hw-apple-silicon"
@@ -29,14 +44,15 @@ chmod +x "$tmpdir"/*-bin/omarchy-hw-apple-silicon
 # global shortcut, or "focus <keyboards>" for a bind scoped to keyboards) and
 # device setting ("device<TAB>name<TAB>tap_to_click").
 load_config() {
-  local platform=$1 packaged_path=${2:-$packaged} edit=${3:-} home
+  local platform=$1 staged=${2:-$packaged} edit=${3:-} home platform_vars
+  mapfile -t platform_vars < <(platform_env "$staged")
   home=$(mktemp -d "$tmpdir/home.XXXXXX")
   mkdir -p "$home/.config"
   cp -R "$runtime/config/hypr" "$home/.config/hypr"
   [[ -z $edit ]] || printf '%s\n' "$edit" >>"$home/.config/hypr/input.lua"
   [[ -z ${NO_DEFAULT_BINDINGS:-} ]] || sed -i 's/^-- omarchy_default_bindings = false$/omarchy_default_bindings = false/' "$home/.config/hypr/hyprland.lua"
   HOME="$home" XDG_CONFIG_HOME="$home/.config" XDG_STATE_HOME="$home/.local/state" OMARCHY_PATH="$runtime" \
-    OMARCHY_PACKAGED_PATH="$packaged_path" PATH="$tmpdir/$platform-bin:$PATH" lua <<'LUA'
+    PATH="$tmpdir/$platform-bin:$PATH" env "${platform_vars[@]}" lua <<'LUA'
 local function proxy()
   return setmetatable({}, {
     __index = function(self, key)
@@ -170,16 +186,16 @@ nodefaults=$(NO_DEFAULT_BINDINGS=1 load_config apple) || fail "the config loads 
 pass "omarchy_default_bindings = false turns the Mac's binds off with Omarchy's"
 
 # The keybindings menu shows the brightness keys as the F1 and F2 they are.
-[[ $(<"$packaged/default/omarchy/platform/key-names") == $'XF86MonBrightnessUp F2\nXF86MonBrightnessDown F1' ]] ||
+[[ $(<"$platform_root/key-names") == $'XF86MonBrightnessUp F2\nXF86MonBrightnessDown F1' ]] ||
   fail "omarchy-mac names the brightness keys F2 and F1"
-grep -Fq 'default/omarchy/platform/key-names' "$runtime/bin/omarchy-menu-keybindings" || fail "the keybindings menu reads the platform's key names"
+grep -Fq "$key_names_path" "$runtime/bin/omarchy-menu-keybindings" || fail "the keybindings menu reads the platform's key names"
 pass "the keybindings menu names the Mac's brightness keys as its F-keys"
 
 # The bar keeps clear of each MacBook panel's notch.
-PACKAGED="$packaged" RUNTIME="$runtime" node <<'JS'
+CUTOUTS="$platform_root/display-cutouts.json" RUNTIME="$runtime" node <<'JS'
 const fs = require('fs')
 const model = require(process.env.RUNTIME + '/shell/plugins/bar/BarModel.js')
-const cutouts = model.parseCutouts(fs.readFileSync(process.env.PACKAGED + '/default/shell/platform/display-cutouts.json', 'utf8'))
+const cutouts = model.parseCutouts(fs.readFileSync(process.env.CUTOUTS, 'utf8'))
 const expect = (ok, what) => { if (!ok) { console.error('not ok - ' + what); process.exit(1) } }
 expect(cutouts.length === 4, 'four MacBook panels')
 expect(model.notchFloor(cutouts, 'top', 'eDP-1', 1728, 1117, 2, 0) === 32, '16" MacBook Pro at scale 2: 32 px')
@@ -193,7 +209,7 @@ pass "the bar keeps clear of the notch on every MacBook panel omarchy-mac descri
 
 # The focus bind moves to the built-in screen only when another screen has it.
 focus_with() {
-  PATH="$tmpdir/apple-bin:$PATH" lua - "$packaged/default/hypr/platform/defaults/apple.lua" "$1" <<'LUA'
+  PATH="$tmpdir/apple-bin:$PATH" lua - "$platform_root/hypr/defaults/apple.lua" "$1" <<'LUA'
 local file, layout = arg[1], arg[2]
 local focus
 hl = {
@@ -228,7 +244,7 @@ pass "the built-in screen focus handles external, built-in only and clamshell la
 # one, or the command Omarchy passes fourth when the bind reaches the shell
 # through its global shortcut.
 decorated() {
-  PATH="$tmpdir/apple-bin:$PATH" lua - "$packaged/default/hypr/platform/defaults/apple.lua" "$@" <<'LUA'
+  PATH="$tmpdir/apple-bin:$PATH" lua - "$platform_root/hypr/defaults/apple.lua" "$@" <<'LUA'
 local file, dispatcher, command = arg[1], arg[2], arg[3]
 hl = { device = function() end, config = function() end, bind = function(_, _, opts) if opts and opts.device then print("focus") end end }
 o = { bind_decorators = {}, bind = function() end, shell_succeeds = function() return true end }
@@ -250,3 +266,45 @@ LUA
 [[ -z $(decorated global "omarchy-launch-browser") ]] || fail "an app keeps today's focus"
 [[ -z $(decorated global) ]] || fail "an opaque dispatcher with no command keeps today's focus"
 pass "the focus bind follows the command a bind runs, whether it is the dispatcher or passed alongside it"
+
+# The built-in panel's backlight is the Retina panel's, never the Touch Bar's:
+# an older runtime knows that itself, one with the platform root reads it from
+# omarchy-mac's displays.conf. The copy reads a staged root in place of the
+# fixed one.
+backlights=$tmpdir/backlight
+mkdir -p "$backlights/display-pipe" "$backlights/228600000.dsi.0" "$backlights/apple-panel-bl"
+pick() {
+  sed "s|/usr/share/omarchy-platform|$1|g" "$runtime/bin/omarchy-hw-display" >"$tmpdir/omarchy-hw-display"
+  OMARCHY_BACKLIGHT_PATH=$backlights bash "$tmpdir/omarchy-hw-display"
+}
+[[ $(pick "$platform_root") == apple-panel-bl ]] || fail "a Mac's panel backlight is apple-panel-bl" "$(pick "$platform_root")"
+if grep -qF /usr/share/omarchy-platform "$runtime/bin/omarchy-hw-display"; then
+  [[ $(pick "$tmpdir/none") != apple-panel-bl ]] || fail "the runtime alone knows no Mac backlight; displays.conf names it"
+fi
+rmdir "$backlights/apple-panel-bl"
+! pick "$platform_root" >/dev/null || fail "a Touch Bar backlight never stands in for the panel's" "$(pick "$platform_root")"
+pass "a Mac dims its Retina panel, never the Touch Bar"
+
+# An external monitor on a Mac is probed over DDC only when its connector has a
+# ddc node: an older runtime decides that itself, one with the platform root
+# from displays.conf. The copy reads a staged root and DRM class.
+mkdir -p "$tmpdir/ddc-bin"
+printf '#!/bin/sh\nexit 1\n' >"$tmpdir/ddc-bin/omarchy-hyprland-monitor-focused-apple"
+printf '#!/bin/sh\necho "ddcutil $*" >>"$DDC_LOG"\nexit 1\n' >"$tmpdir/ddc-bin/ddcutil"
+chmod +x "$tmpdir/ddc-bin/"*
+probes_ddc() {
+  local copy=$tmpdir/omarchy-brightness-display run
+  sed -e "s|/usr/share/omarchy-platform|$1|g" -e "s|/sys/class/drm|$tmpdir/drm|g" "$runtime/bin/omarchy-brightness-display" >"$copy"
+  run=$(mktemp -d "$tmpdir/run.XXXXXX")
+  DDC_LOG=$run/ddc.log XDG_RUNTIME_DIR=$run PATH="$tmpdir/ddc-bin:$tmpdir/apple-bin:$runtime/bin:$PATH" bash "$copy" --monitor DP-1 >/dev/null 2>&1 || true
+  [[ -s $run/ddc.log ]]
+}
+mkdir -p "$tmpdir/drm"
+! probes_ddc "$platform_root" || fail "a Mac's monitor without a ddc node is not probed over DDC"
+mkdir -p "$tmpdir/drm/card0-DP-1/ddc"
+probes_ddc "$platform_root" || fail "a Mac's monitor with a ddc node is probed over DDC"
+rm -r "$tmpdir/drm/card0-DP-1"
+if grep -qF /usr/share/omarchy-platform "$runtime/bin/omarchy-brightness-display"; then
+  probes_ddc "$tmpdir/none" || fail "the runtime alone probes every external monitor; displays.conf limits it"
+fi
+pass "a Mac probes an external monitor over DDC only where its connector has a ddc node"

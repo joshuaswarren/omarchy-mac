@@ -19,15 +19,47 @@ for channel in stable rc edge; do
 done
 [[ -x $stage/usr/bin/omarchy-hw-apple && $(readlink "$stage/usr/share/omarchy/bin/omarchy-hw-apple") == /usr/bin/omarchy-hw-apple ]] ||
   fail 'the legacy alias is staged in /usr/bin and linked from the runtime tree'
-for file in hypr/platform/apple-gestures.lua hypr/platform/defaults/apple.lua hypr/platform/settings/apple.lua omarchy/platform/key-names shell/platform/display-cutouts.json; do
-  [[ -f $stage/usr/share/omarchy/default/$file ]] || fail "$file is staged in the runtime's platform hooks"
+platform=$stage/usr/share/omarchy-platform
+for file in hypr/defaults/apple.lua hypr/settings/apple.lua hypr/gestures/apple-gestures.lua key-names display-cutouts.json displays.conf; do
+  [[ -f $platform/$file && ! -L $platform/$file ]] || fail "$file is staged in the platform root"
 done
-python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$stage/usr/share/omarchy/default/shell/platform/display-cutouts.json" ||
+python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$platform/display-cutouts.json" ||
   fail 'the cutout description is valid JSON'
+# A runtime older than the platform root reads the same files from its own tree.
+while read -r file legacy; do
+  legacy=$stage/usr/share/omarchy/default/$legacy
+  [[ -f $legacy && ! -L $legacy ]] && cmp -s "$platform/$file" "$legacy" ||
+    fail "$file is also staged, unchanged, where an older runtime reads it"
+done <<'LEGACY'
+hypr/defaults/apple.lua hypr/platform/defaults/apple.lua
+hypr/settings/apple.lua hypr/platform/settings/apple.lua
+hypr/gestures/apple-gestures.lua hypr/platform/apple-gestures.lua
+key-names omarchy/platform/key-names
+display-cutouts.json shell/platform/display-cutouts.json
+LEGACY
+[[ ! -e $stage/usr/share/omarchy/default/displays.conf ]] || fail 'displays.conf is only for a runtime that reads the platform root'
+# displays.conf follows the runtime's grammar (docs/file-layout.md): one
+# directive per line, a name with no "/", comments on whole lines only. Nothing
+# in it may be a line the runtime would silently ignore.
+directives=()
+while IFS= read -r line || [[ -n $line ]]; do
+  [[ -z ${line//[[:space:]]/} || $line =~ ^[[:space:]]*# ]] && continue
+  read -r directive argument extra <<<"$line"
+  case $directive in
+  backlight-skip | backlight-prefer)
+    [[ -n $argument && -z $extra && $argument != */* && $argument != . && $argument != .. ]] ||
+      fail "displays.conf: $directive takes one name" "$line" ;;
+  ddc-require-connector-ddc) [[ -z $argument ]] || fail "displays.conf: $directive takes no argument" "$line" ;;
+  *) fail 'displays.conf: unknown directive' "$line" ;;
+  esac
+  directives+=("$directive${argument:+ $argument}")
+done <"$platform/displays.conf"
+[[ ${directives[*]} == 'backlight-skip display-pipe backlight-skip 228600000.dsi.0 backlight-prefer apple-panel-bl ddc-require-connector-ddc' ]] ||
+  fail 'displays.conf skips the Touch Bar backlights, prefers the Retina panel and probes DDC only where a connector has it' "${directives[*]}"
 for helper in electron-launchers electron-desktop-entries; do
   [[ -x $stage/usr/lib/omarchy-mac/$helper ]] || fail "$helper is staged"
 done
-pass 'the setup entrypoints, pacman templates and Electron helpers are staged'
+pass 'the setup entrypoints, pacman templates, platform files and Electron helpers are staged'
 
 (( EUID != 0 )) || { pass 'fixture roots are ignored as root; behaviour cases skipped'; exit 0; }
 

@@ -21,6 +21,17 @@ done < <(find vendor -type l -print0)
 while IFS= read -r -d '' file; do
   install -Dm644 "$file" "$destination/usr/$file"
 done < <(find share -type f -print0)
+# A runtime older than the fixed platform root reads these from its own tree.
+# Regular copies, not links: both runtimes load only regular files.
+while read -r file legacy; do
+  install -Dm644 "share/omarchy-platform/$file" "$destination/usr/share/omarchy/default/$legacy"
+done <<'LEGACY'
+hypr/defaults/apple.lua hypr/platform/defaults/apple.lua
+hypr/settings/apple.lua hypr/platform/settings/apple.lua
+hypr/gestures/apple-gestures.lua hypr/platform/apple-gestures.lua
+key-names omarchy/platform/key-names
+display-cutouts.json shell/platform/display-cutouts.json
+LEGACY
 for file in legacy/*; do install -Dm644 "$file" "$destination/usr/share/omarchy-mac/legacy/${file##*/}"; done
 install -Dm644 LICENSE "$destination/usr/share/licenses/omarchy-mac/LICENSE"
 install -Dm644 version "$destination/usr/share/omarchy-mac/version"
