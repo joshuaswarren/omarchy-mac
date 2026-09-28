@@ -146,7 +146,10 @@ class System:
 
     def shell_instances(self):
         # Running Omarchy shell instances, or None if Quickshell cannot tell.
+        # Quickshell 0.3.1 answers in prose, even with -j, when none runs.
         output = self.output('quickshell', 'list', '-p', os.environ['OMARCHY_PATH'] + '/shell', '--any-display', '-j', timeout=5)
+        if output is not None and output.startswith('No running instances'):
+            return 0
         try:
             instances = json.loads(output) if output is not None else None
         except ValueError:

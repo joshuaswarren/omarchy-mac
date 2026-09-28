@@ -4,6 +4,224 @@
 # omarchy:examples=omarchy restart audio | omarchy-restart-audio
 
 services=(wireplumber.service pipewire.service pipewire-pulse.service)
+shell_config="$OMARCHY_PATH/shell"
+runtime_dir=${XDG_RUNTIME_DIR:-/run/user/$UID}
+suspend_offset_before=""
+sleep_inhibitor=""
+shell_down=0
+shell_lost=0
+
+# Quickshell 0.3.1 on Qt 6.11 can crash when PipeWire or WirePlumber goes away
+# under it (a delegate model reads a PipeWire node already deleted), and its
+# crash handler brings the shell back with a crash report window and the
+# screen locked. So audio services restart only while the screen is unlocked,
+# with the shell stopped for just that long.
+
+# One audio repair at a time, shared with the Apple audio watchdog: another
+# restart could find the shell stopped for this one and restart audio again
+# after it came back.
+take_repair_lock() {
+  mkdir -p "$runtime_dir"
+  exec {repair_lock}>>"$runtime_dir/omarchy-audio-repair.lock"
+
+  if ! flock -n "$repair_lock"; then
+    echo "Not restarting audio: another audio repair is running. Try again in a minute." >&2
+    exit 1
+  fi
+}
+
+# Prints the number of running shell instances, or fails if Quickshell cannot
+# tell. With none running, Quickshell answers in prose, even with -j.
+shell_instances() {
+  local listing
+
+  listing=$(timeout 5s quickshell list -p "$shell_config" --any-display -j 2>/dev/null) || return 1
+
+  if [[ $listing == "No running instances"* ]]; then
+    echo 0
+  else
+    jq -e 'if type == "array" then length else error end' <<<"$listing" 2>/dev/null
+  fi
+}
+
+# Prints why the shell must not be stopped now, or nothing if it may be. Only
+# a shell that says the screen is neither locked nor locking may be stopped.
+shell_stop_blocker() {
+  local status
+  local state
+
+  omarchy-hyprland-session-locked
+  case $? in
+    0) echo "the screen is locked"; return ;;
+    1) ;;
+    *) echo "the lock state is unknown"; return ;;
+  esac
+
+  status=$(OMARCHY_SHELL_IPC_TIMEOUT=3s omarchy-shell lock status 2>/dev/null)
+  state=$(jq -r '
+    if type != "object" then "unknown"
+    elif .secure == true or .requested == true then "locked"
+    elif .secure == false and .requested == false then "unlocked"
+    else "unknown"
+    end' <<<"$status" 2>/dev/null)
+
+  case $state in
+    unlocked) ;;
+    locked) echo "the screen is locked" ;;
+    *) echo "the lock state is unknown" ;;
+  esac
+}
+
+stop_shell() {
+  local attempt
+  local count
+
+  for (( attempt = 0; attempt < 10; attempt++ )); do
+    timeout 5s quickshell kill -p "$shell_config" --any-display >/dev/null 2>&1
+    count=$(shell_instances) && (( count == 0 )) && return 0
+  done
+
+  return 1
+}
+
+# CLOCK_BOOTTIME runs through a suspend and CLOCK_MONOTONIC does not.
+suspend_offset() {
+  python3 -c 'import time; print(time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic())'
+}
+
+# Nothing can lock the screen while the shell is stopped, so block sleep and
+# wait until logind holds the block. Closing the lid still suspends (logind
+# ignores inhibitors for it by default), which restore_shell catches.
+block_sleep() {
+  local attempt
+
+  systemd-inhibit --what=sleep --mode=block --who=omarchy-restart-audio \
+    --why="The Omarchy shell is stopped while audio restarts" \
+    sleep infinity >/dev/null 2>&1 {repair_lock}>&- &
+  sleep_inhibitor=$!
+
+  for (( attempt = 0; attempt < 30; attempt++ )); do
+    if systemd-inhibit --list --no-legend --no-pager 2>/dev/null |
+      awk -v pid="$sleep_inhibitor" '$1 == "omarchy-restart-audio" && $4 == pid { found = 1 } END { exit !found }'; then
+      return 0
+    fi
+    kill -0 "$sleep_inhibitor" 2>/dev/null || break
+    sleep 0.1
+  done
+
+  release_sleep
+  return 1
+}
+
+release_sleep() {
+  [[ -n $sleep_inhibitor ]] && kill "$sleep_inhibitor" 2>/dev/null
+  sleep_inhibitor=""
+}
+
+# Asks the fresh shell to lock until it reports the lock secure; a fresh shell
+# may refuse early requests while its lock plugin loads.
+lock_screen() {
+  local deadline=$((SECONDS + 30))
+  local state
+
+  while (( SECONDS < deadline )); do
+    state=$(OMARCHY_SHELL_IPC_TIMEOUT=3s omarchy-shell lock status 2>/dev/null |
+      jq -r 'if .secure == true then "secure" elif .requested == true then "locking" else "idle" end' 2>/dev/null)
+
+    case $state in
+      secure) return 0 ;;
+      locking) ;;
+      *) OMARCHY_SHELL_IPC_TIMEOUT=3s omarchy-shell lock lock >/dev/null 2>&1 ;;
+    esac
+
+    sleep 0.5
+  done
+
+  return 1
+}
+
+# Starts the shell again, and locks the screen if the machine slept while no
+# shell could lock it.
+restore_shell() {
+  local attempt
+  local offset
+  local restored=1
+
+  for (( attempt = 0; attempt < 3; attempt++ )); do
+    omarchy-restart-shell && restored=0 && break
+    sleep 2
+  done
+
+  offset=$(suspend_offset)
+  if ! awk -v before="$suspend_offset_before" -v after="$offset" 'BEGIN { exit !(after - before < 0.5) }'; then
+    if ! lock_screen; then
+      echo "The screen could not be locked after a suspend during the audio restart." >&2
+      restored=1
+    fi
+  fi
+
+  release_sleep
+  shell_down=0
+  if (( restored != 0 )); then
+    echo "The Omarchy shell did not come back; run omarchy-restart-shell." >&2
+    shell_lost=1
+  fi
+}
+
+# An interrupted restart, or a closed terminal, must not strand the desktop
+# without its shell.
+on_exit() {
+  local status=$?
+
+  trap '' INT TERM HUP
+  (( shell_down )) && restore_shell
+  release_sleep
+  (( shell_lost && status == 0 )) && status=1
+  exit "$status"
+}
+
+# Runs a command, with the shell stopped around it when one runs. Refuses,
+# touching nothing, while the screen is or may be locked.
+with_shell_stopped() {
+  local instances
+  local blocker
+  local status=0
+
+  if ! instances=$(shell_instances); then
+    echo "Not restarting audio: Quickshell cannot tell whether the Omarchy shell is running." >&2
+    exit 1
+  fi
+
+  if (( instances == 0 )); then
+    "$@"
+    return
+  fi
+
+  blocker=$(shell_stop_blocker)
+  if [[ -n $blocker ]]; then
+    echo "Not restarting audio while $blocker: the Omarchy shell could crash. Unlock the screen and try again." >&2
+    exit 1
+  fi
+
+  if ! block_sleep; then
+    echo "Not restarting audio: sleep could not be blocked while the Omarchy shell is stopped." >&2
+    exit 1
+  fi
+
+  suspend_offset_before=$(suspend_offset)
+  shell_down=1
+  echo -e "Stopping the Omarchy shell while audio restarts...\n"
+
+  if ! stop_shell; then
+    echo "Not restarting audio: the Omarchy shell could not be stopped." >&2
+    exit 1
+  fi
+
+  "$@" || status=$?
+  restore_shell
+  (( status == 0 )) || return "$status"
+  (( shell_lost == 0 ))
+}
 
 restart_audio_services() {
   echo -e "Restarting audio services...\n"
@@ -210,14 +428,19 @@ if omarchy-hw-apple-silicon && omarchy-cmd-present omarchy-audio-asahi-mic-map; 
     echo "Could not save microphone mapping gain before audio recovery." >&2
   fi
 fi
-restart_audio_services || true
+take_repair_lock
+trap on_exit EXIT
+trap '' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+with_shell_stopped restart_audio_services || true
 
 if ! wpctl_healthy; then
   echo -e "\nPipeWire is still not responding. Checking for stuck USB audio devices..."
 
   if recover_stuck_usb_audio; then
     echo -e "\nRestarting audio services after USB audio reset...\n"
-    restart_audio_services || true
+    with_shell_stopped restart_audio_services || true
   else
     echo "No stuck USB audio device was detected automatically."
   fi
