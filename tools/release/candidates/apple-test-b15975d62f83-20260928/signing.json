@@ -1,0 +1,279 @@
+{
+  "schema": 1,
+  "set": "apple-test-b15975d62f83-20260928",
+  "manifest_sha256": "d22ca800d3d07d8e521541f70272f57e6c75e160f722162d2b77aa56c5ed3bf4",
+  "set_sha256": "fef199cbc9b000499c729079742ad00731d2d9f994ac71dd7660db2362f4932c",
+  "signer": {
+    "fingerprint": "E11E851AF82E02AEF54C8794599A6024E3D35379",
+    "uid": "Omarchy Mac candidate test lane (not for installed systems)",
+    "key": "candidate-signing-key.asc",
+    "key_sha256": "19ff58f4c32bafa20482ff8609555ddfecc0b9e86ae54491b084f431f84170d9"
+  },
+  "signed_at": "2026-09-28T13:03:22+1000",
+  "signatures": [
+    {
+      "file": "omarchy-4.0.0.alpha.quattro.r1790563381.gb15975d62f83-1.1790563595-aarch64.pkg.tar.xz",
+      "sha256": "5d8a283df9ac4402e2b565921d654186da576dd082d4691ce7839e10260ca691",
+      "signature": "omarchy-4.0.0.alpha.quattro.r1790563381.gb15975d62f83-1.1790563595-aarch64.pkg.tar.xz.sig",
+      "signature_sha256": "e084dec55c4308ada4ed6f054f1a7e5eb29008c96a8fe1d177166978fdb01c05"
+    },
+    {
+      "file": "omarchy-settings-4.0.0.alpha.quattro.r1790563381.gb15975d62f83-1.1790563595-aarch64.pkg.tar.xz",
+      "sha256": "2b6a94b1004790555a4089efb20ef786755448ec1182bf6c52564d64d53e52f7",
+      "signature": "omarchy-settings-4.0.0.alpha.quattro.r1790563381.gb15975d62f83-1.1790563595-aarch64.pkg.tar.xz.sig",
+      "signature_sha256": "ba7b68c924dcb6821f0511e96c1319c50d3889fb46d008b48d1ee5b228e99a88"
+    },
+    {
+      "file": "omarchy-mac-0.1.0-7.1790563595-aarch64.pkg.tar.xz",
+      "sha256": "4dfa9f80408dc797d4a64aa99d7911ded2b618c82bdd3bf26efb9017cff0c2a7",
+      "signature": "omarchy-mac-0.1.0-7.1790563595-aarch64.pkg.tar.xz.sig",
+      "signature_sha256": "d93825434cbff458c596b0cdc0c65551cde3dc28db95e7c2fd0e966083b77f65"
+    },
+    {
+      "file": "omarchy-mac-boot-20260927-1.1790563595-aarch64.pkg.tar.xz",
+      "sha256": "14645422aa220b292d090f537a867a81e64f9fffae7b527a83044255fbb583ba",
+      "signature": "omarchy-mac-boot-20260927-1.1790563595-aarch64.pkg.tar.xz.sig",
+      "signature_sha256": "8aa40f120d5ad56e860c698a999edbf7df60c0f1b39eff228c6f6b7e494d7f55"
+    },
+    {
+      "file": "linux-aurora-7.1.12.aurora2-11-aarch64.pkg.tar.zst",
+      "sha256": "16112e51dcf2be094a376db76844eb75af884b1d446df2b8049356f2248c0cf3",
+      "signature": "linux-aurora-7.1.12.aurora2-11-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "80c07799e15525f2e4b696e0890fe51e4ef58cd0a948f23114d34c10862ce35a"
+    },
+    {
+      "file": "linux-aurora-headers-7.1.12.aurora2-11-aarch64.pkg.tar.zst",
+      "sha256": "62fba11943f09410573ee6b5c60824daa3b915a46bbad68a78f8f4e7f741da4b",
+      "signature": "linux-aurora-headers-7.1.12.aurora2-11-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "2fca40512e21207a29e075b1272bd7505f6ef9ab8e285fdf9bcecb2f74dd5fdf"
+    },
+    {
+      "file": "m1n1-aurora-1.6.1.aurora1-3-aarch64.pkg.tar.zst",
+      "sha256": "5e01b73b0cf2145d9917621b2a3fab4b6703ee7f9e684aae4eb26e1e2ccafc34",
+      "signature": "m1n1-aurora-1.6.1.aurora1-3-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "f2152355f8d0e1f7520e6de23db16e11ba30ef77a3839eaba2b2d5332facd2a1"
+    },
+    {
+      "file": "uboot-asahi-2026.07.asahi2-4-aarch64.pkg.tar.zst",
+      "sha256": "5f20164d0d4c4e5bb5fb2c344ae255fcccfeffec366fdd6194ed2b12b521918e",
+      "signature": "uboot-asahi-2026.07.asahi2-4-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "4963f87048f36899b43c8a637a49cdc0ad9a7e363ec9201843df68e3723aa3b0"
+    },
+    {
+      "file": "limine-mkinitcpio-hook-1.39.0-2-aarch64.pkg.tar.zst",
+      "sha256": "8d3c904056e0880db39152207f62cdff2d3c9cf16598dfb7eb512149f3ebd8b0",
+      "signature": "limine-mkinitcpio-hook-1.39.0-2-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "00b59a22d62a9aa4a57fe9d9237dadfc75d21d7a759d77aab2f4d1ab0be54592"
+    },
+    {
+      "file": "aether-4.30.0-1-aarch64.pkg.tar.zst",
+      "sha256": "73ff687119fbf5194ea8bd8d1748576e3232f11b058c047bf48595dbc043fd01",
+      "signature": "aether-4.30.0-1-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "d1c63624a4f62ca889740b3c2eff9649cb0aea8c098637ede04413bf397062ea"
+    },
+    {
+      "file": "aquamarine-0.15.1-1.1-aarch64.pkg.tar.zst",
+      "sha256": "f84d2948a3768bbfd192a58ab6befb6eeaf272d2543bdf97c112ae1a58f1bb81",
+      "signature": "aquamarine-0.15.1-1.1-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "90a84e34c50f0d78270cd605a3f3032a8cee74e42d4a497084ce0882393a9c18"
+    },
+    {
+      "file": "asdcontrol-1.0.6.0-2-aarch64.pkg.tar.zst",
+      "sha256": "0dd708ccc4ceefdcf233a19460344ec3b809fff24446614d34666562a73737e9",
+      "signature": "asdcontrol-1.0.6.0-2-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "6d3e29ccf2c9cb43291e116006cae85e33b28cae285c6bcf44fe4202270359a6"
+    },
+    {
+      "file": "avd-fw-0.1-1-aarch64.pkg.tar.zst",
+      "sha256": "da493a7b9c592e528d309faeb728563205149e9d86da4033066e149d57862d88",
+      "signature": "avd-fw-0.1-1-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "6221e089ccecc242a895bf54711997d5669643f8b193f71cfe5ba729e5906dec"
+    },
+    {
+      "file": "cliamp-2.0.1-1-aarch64.pkg.tar.zst",
+      "sha256": "7a59c5c44dfab70ee338ee067056e28fb71a361f598945069bcb752504d4cc51",
+      "signature": "cliamp-2.0.1-1-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "718b4f4b58f4042442f2115e9f6b7e7a588f5e75ee7ba1095de88415e9003a47"
+    },
+    {
+      "file": "dotnet-host-bin-10.0.401-2-aarch64.pkg.tar.zst",
+      "sha256": "1fb19b704669272e69a1ab6b65e6e549bb05fb6c68c75ccaa4ad0a28abaf7b71",
+      "signature": "dotnet-host-bin-10.0.401-2-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "be2eb73c295b98eee4810000febb7585ac468848dcdacdf24c403c9091e68efd"
+    },
+    {
+      "file": "dotnet-runtime-bin-10.0.401-2-aarch64.pkg.tar.zst",
+      "sha256": "66e6ba0b48550b805e6854ff8c8d89db9b9b144c01e112cdaa47a39791311826",
+      "signature": "dotnet-runtime-bin-10.0.401-2-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "78384e16d87dd29fb21715998f5d58df5967263e4a15242b260a5916f2068ed7"
+    },
+    {
+      "file": "herdr-0.8.2-1-aarch64.pkg.tar.zst",
+      "sha256": "aa21c67bec181301c4f5c1b697aa0107cd23b93cb4926c5e87f6f1c10332b109",
+      "signature": "herdr-0.8.2-1-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "a99caa8b306cd5569bb6276b2f57d12af89eb5170a1f97ecbaa05a7562b9a765"
+    },
+    {
+      "file": "hyprland-0.56.2-3-aarch64.pkg.tar.zst",
+      "sha256": "09cd043355fe87581a57a3b41623ade2b418463e3ec152e283518bc6b3b93e94",
+      "signature": "hyprland-0.56.2-3-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "54153af98b3c89baf32d27d17c5855d318d4b4bb037398e7e13ff65fa63e01d5"
+    },
+    {
+      "file": "hyprland-guiutils-0.2.2-3-aarch64.pkg.tar.zst",
+      "sha256": "803bf353cb156f2afb88174de4fa876b1752b7385741c7832df49da392c79df0",
+      "signature": "hyprland-guiutils-0.2.2-3-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "8e4c4fadd1ac2ce8ac651bfb3281499644aaa4c29e567251cf2d58bfa9ddd3c6"
+    },
+    {
+      "file": "hyprland-preview-share-picker-0.2.1-2-aarch64.pkg.tar.zst",
+      "sha256": "38667485868a17f240db74554810b8b9b12a89cd22079e4e6600033a38fc4189",
+      "signature": "hyprland-preview-share-picker-0.2.1-2-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "1d686e3db79d9403305d9b912aa1e77af447f97c6e895b2a79879b91b3b049a6"
+    },
+    {
+      "file": "hyprtoolkit-0.5.4-5.1-aarch64.pkg.tar.zst",
+      "sha256": "7f258973e417278b30f755fae12b957b25811103446580a9c84d813ce8a374d6",
+      "signature": "hyprtoolkit-0.5.4-5.1-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "ade175117f49e98118383ef26bb83422053d01d57389a6f17f59c7ed87668350"
+    },
+    {
+      "file": "libva-v4l2_request-avd-1.3-1-aarch64.pkg.tar.zst",
+      "sha256": "df381f94324936bdb06fd33603b55b83e2e1387aa8fd361cb706de8bccac7bd4",
+      "signature": "libva-v4l2_request-avd-1.3-1-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "3b5c3b092ba20cf21b45aac774a98266289741d83502ff232d45263d5e60a03b"
+    },
+    {
+      "file": "limine-snapper-sync-1.32.0-1-aarch64.pkg.tar.zst",
+      "sha256": "0def3e0cbc5d68c70e39ac9928fcb609d5f426a71a246b55363481e2051927d0",
+      "signature": "limine-snapper-sync-1.32.0-1-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "cf5704ea8da23609cfeb14b0d7937655724553c8e71fffe7dd5eb5052b849ece"
+    },
+    {
+      "file": "localsend-1.18.2-1-aarch64.pkg.tar.zst",
+      "sha256": "8a41fde552b79e2e269afce3f199af58e4d970ee79bf1fb79075c203d890bd65",
+      "signature": "localsend-1.18.2-1-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "12f90a1ce822a6565e2422894593a7b70b071f89bb439b81fb17a39de3548b19"
+    },
+    {
+      "file": "mise-bin-2026.9.12-1-aarch64.pkg.tar.zst",
+      "sha256": "9a4457015fc8123d4fcdf7c2ccf454af4ed3afe0f33e1c29fcc64a113f215b49",
+      "signature": "mise-bin-2026.9.12-1-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "a1dd2fb91005a5ec30f30151f97d41d40a0b8043dde4296686556ae25d9ed454"
+    },
+    {
+      "file": "obsidian-1.13.7-2-aarch64.pkg.tar.zst",
+      "sha256": "878cea55cd865db6b3470234b4ac34eca48c906a575be96f758f2af0d66c7799",
+      "signature": "obsidian-1.13.7-2-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "3e735a3143925db43179a7fdf25491486fcfebd5eb68e22046ab40fc374ac2c1"
+    },
+    {
+      "file": "omacalc-0.2.2-1-aarch64.pkg.tar.zst",
+      "sha256": "3ca5cf74ea0dce65183219b48cb31b87492ee1835463cb1181ab7d2953b9b24b",
+      "signature": "omacalc-0.2.2-1-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "5a7dab0c36ace07a409a33a59e85820d0a659c3d1ea14aff4a7970484f2f5c26"
+    },
+    {
+      "file": "omacut-0.4.0-1-aarch64.pkg.tar.zst",
+      "sha256": "a7461faa5684abe44c45e0b1f3fd01da00a85da3b12b2546875feab39eae1c1c",
+      "signature": "omacut-0.4.0-1-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "2fffaf1ff174bb2bf34c6a0bef2b4581fb55af153a29836eedf88d78ac43609a"
+    },
+    {
+      "file": "omarchy-keyring-20251027-1-any.pkg.tar.zst",
+      "sha256": "cce48c07cfc2b97e198df1bc81705db2921685032fe39f18b4ddfd84264b5967",
+      "signature": "omarchy-keyring-20251027-1-any.pkg.tar.zst.sig",
+      "signature_sha256": "2aad137659027767c65288e06b4e2030c878fccf0fcac989dd6c043014fd3426"
+    },
+    {
+      "file": "omarchy-nvim-2026.9.21-2-any.pkg.tar.zst",
+      "sha256": "c276e27c22fe2680df72274f5311f285df56953cdf9e2a035fa0079cea87f37c",
+      "signature": "omarchy-nvim-2026.9.21-2-any.pkg.tar.zst.sig",
+      "signature_sha256": "32c4777ea691a4220837ef27cee1219507e3aa42d8ae048bcf79dfa64054fa20"
+    },
+    {
+      "file": "omawrite-0.5.0-1-aarch64.pkg.tar.zst",
+      "sha256": "5c75f6f093fef0f86d9b6355df5a0100cbe937f3639b450b92f3ed965892096c",
+      "signature": "omawrite-0.5.0-1-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "f2def4bda076abcf6a4ec4c172bee34927957aa64127c1067f92614b1fc2e1c8"
+    },
+    {
+      "file": "pinta-3.1.2-1-aarch64.pkg.tar.zst",
+      "sha256": "ebdf1b4de706b67e955027fe5817baf0d5848cf65066ed6102dccbbd2b25892d",
+      "signature": "pinta-3.1.2-1-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "d33240da9a5c2f113ca5f09b125a7f9623ecfa0b727e41739811184e358181d2"
+    },
+    {
+      "file": "qemu-user-static-1.1.10.0.13+ds.0+deb13u1-1-aarch64.pkg.tar.zst",
+      "sha256": "88ff26fed51b043d9706ae7320c5ee33a7036d1ed1ea0c4b2e49d6d49785deb4",
+      "signature": "qemu-user-static-1.1.10.0.13+ds.0+deb13u1-1-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "22195a2a7675cd86839511cc5046d2fc64c274dfb42e66b03624afd4592a5d98"
+    },
+    {
+      "file": "qemu-user-static-binfmt-1.1.10.0.13+ds.0+deb13u1-1-aarch64.pkg.tar.zst",
+      "sha256": "1255d5d015514dcb56068e3cf75c65490cd570f4327cc482d36ac3126f02316f",
+      "signature": "qemu-user-static-binfmt-1.1.10.0.13+ds.0+deb13u1-1-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "44dac4b16e6c07a9eb6459951ed705d3b03ded4b3406ed13d354af4214bf1250"
+    },
+    {
+      "file": "tensaku-0.28.0-1-aarch64.pkg.tar.zst",
+      "sha256": "3dc3f860a1136f7d43f40d7c26824ab0a0da0892af87c3c1ff97cbff2b27afa7",
+      "signature": "tensaku-0.28.0-1-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "b5a4241efa65e3c0f2920707e8d86c09cc948f92a23eb48d48fc8ae15ad397e0"
+    },
+    {
+      "file": "tobi-try-1.8.1-3-any.pkg.tar.zst",
+      "sha256": "fa4ba96e6920c9166e0017a205fceee603f3a487f055ce5f40987678418f1e43",
+      "signature": "tobi-try-1.8.1-3-any.pkg.tar.zst.sig",
+      "signature_sha256": "0c9f4a35023590157941f6f1a5154cda9c8f8b9e2d2e9f48ff2525f01d2386a9"
+    },
+    {
+      "file": "ttf-ia-writer-20181225-1-any.pkg.tar.zst",
+      "sha256": "3a0d604964e4c3a6e577f3b925d4e82284bd6f32b9e22f9a88dfa6480706da1c",
+      "signature": "ttf-ia-writer-20181225-1-any.pkg.tar.zst.sig",
+      "signature_sha256": "a4d4ce87c1cee0a74ada5db809092a2ad06abf6aa5ba118bc36fa043990ac4a1"
+    },
+    {
+      "file": "ttf-jetbrains-mono-nerd-basic-3.5.1-1-any.pkg.tar.zst",
+      "sha256": "99070b6ef240303d55f4af175d27b34b36b154480b39dd43b02abd1b710b8553",
+      "signature": "ttf-jetbrains-mono-nerd-basic-3.5.1-1-any.pkg.tar.zst.sig",
+      "signature_sha256": "f4ab1d2660eb26ba23be75359615ede32b27f4f565506e52a9d11dee35ba26c5"
+    },
+    {
+      "file": "ttfx-0.4.0-1-aarch64.pkg.tar.zst",
+      "sha256": "7dbdfc24723f788527be27de61f32ed06512899582f500a67e00f14e082429a1",
+      "signature": "ttfx-0.4.0-1-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "fc00cec4eb6b96dca8e4389b843d40e4fbbbb8458888d9d12351aff062bef434"
+    },
+    {
+      "file": "tzupdate-3.1.0-1-aarch64.pkg.tar.zst",
+      "sha256": "1831268a649a0633a6853bc2cc9702963dc8df7b341d2ccde3d69c5eeae1e07b",
+      "signature": "tzupdate-3.1.0-1-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "4d33b2343df26eb33e65feee23266b117df0747fcec92af6647836a5f078818e"
+    },
+    {
+      "file": "ufw-docker-251123-1-any.pkg.tar.zst",
+      "sha256": "e6af9cc2d241ce0529c35ca9c18bec18fa92a6f94921b95e8f86a41b3dcb05bb",
+      "signature": "ufw-docker-251123-1-any.pkg.tar.zst.sig",
+      "signature_sha256": "15e0136dadcff64c80477a6fbd9e2f2393b8b7ca2083f98454f8d39b1db9fd8c"
+    },
+    {
+      "file": "xdg-terminal-exec-0.14.3-1-any.pkg.tar.zst",
+      "sha256": "aaace8e76c2ea833714c417b8401ad689e016dbd2f6f1ccfb8a3e6e9df539e0f",
+      "signature": "xdg-terminal-exec-0.14.3-1-any.pkg.tar.zst.sig",
+      "signature_sha256": "b21071010ceb9a0c973b3cbc5ed359a5e795f8bfdc671303b9a8cb76f93b997e"
+    },
+    {
+      "file": "yaru-icon-theme-26.04.5.1ubuntu-1-any.pkg.tar.zst",
+      "sha256": "679b7ab464e86424ebd3c2b4ef6d09531f18583c0b0ba62252193ff05e19796a",
+      "signature": "yaru-icon-theme-26.04.5.1ubuntu-1-any.pkg.tar.zst.sig",
+      "signature_sha256": "3925a27cf310e0194ea74bfebc30343a7ed455f68d9ba99fdf2f140b6062776d"
+    },
+    {
+      "file": "yay-13.0.1-1-aarch64.pkg.tar.zst",
+      "sha256": "4b946395bf2dbf6462acb986c3dded67cb86bbeee6a44dbe9161aaac88b8fa9f",
+      "signature": "yay-13.0.1-1-aarch64.pkg.tar.zst.sig",
+      "signature_sha256": "f57d8de86c6db15f38568359b087389514c6d3a49e5a293cb215d8e72569ebfc"
+    }
+  ]
+}
