@@ -300,8 +300,9 @@ provision_verify() {
 # password, and of a recovery key an earlier Mac setup added, in encrypt.state
 # whenever setup or a password change leaves them in other slots, so the boot
 # check can prove the header holds exactly those. Without recovery=, the
-# recorded one stays; an empty one, which owner setup passes, records none. Each must be a key slot the root's header holds. A
-# Mac whose disk the image did not encrypt records nothing.
+# recorded one stays; an empty one, which owner setup passes, records none.
+# Each must be a key slot the root's header holds. A Mac whose disk the image
+# did not encrypt records nothing.
 record_luks_slots() {
   local arg owner="" recovery="" recovery_given=0 phase device slots slot
 
