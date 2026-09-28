@@ -42,13 +42,14 @@ end
 -- that paste into the focused window stay with that window's screen.
 local builtin_keyboards = { "apple-spi-keyboard", "apple-mtp-keyboard" }
 local overlay_prefixes = { "omarchy-menu", "omarchy-shell shell toggle ", "omarchy-shell -q shell togglePanelAt " }
-local pastes_into_focused_window = {
-  ["omarchy-shell shell toggle omarchy.emojis"] = true,
-  ["omarchy-shell shell toggle omarchy.clipboard"] = true,
-}
+local pastes_into_focused_window = { ["omarchy.emojis"] = true, ["omarchy.clipboard"] = true }
 
 local function opens_overlay(command)
-  if type(command) ~= "string" or pastes_into_focused_window[command] then
+  if type(command) ~= "string" then
+    return false
+  end
+  local panel = command:match("^omarchy%-shell shell toggle '?([^' ]+)'?$")
+  if panel and pastes_into_focused_window[panel] then
     return false
   end
   for _, prefix in ipairs(overlay_prefixes) do
@@ -70,8 +71,11 @@ local function focus_builtin_screen()
   end
 end
 
-table.insert(o.bind_decorators, function(keys, dispatcher, opts)
-  if opens_overlay(dispatcher) and not (opts and opts.locked) then
+-- A menu or panel bound as { menu = ... } or { panel = ... } reaches the shell
+-- through its global shortcut, an opaque dispatcher; Omarchy passes the command
+-- it stands for fourth. Older runtimes pass only the dispatcher.
+table.insert(o.bind_decorators, function(keys, dispatcher, opts, command)
+  if opens_overlay(command or dispatcher) and not (opts and opts.locked) then
     hl.bind(keys, focus_builtin_screen, { device = { inclusive = true, list = builtin_keyboards } })
   end
 end)

@@ -24,8 +24,9 @@ printf '#!/bin/sh\nexit 1\n' >"$tmpdir/other-bin/omarchy-hw-apple-silicon"
 chmod +x "$tmpdir"/*-bin/omarchy-hw-apple-silicon
 
 # Loads the runtime's hyprland.lua against a user's ~/.config/hypr and prints
-# every bind ("bind<TAB>keys<TAB>command", or "focus <keyboards>" for a bind
-# scoped to keyboards) and device setting ("device<TAB>name<TAB>tap_to_click").
+# every bind ("bind<TAB>keys<TAB>command", "global <name>" for the shell's
+# global shortcut, or "focus <keyboards>" for a bind scoped to keyboards) and
+# device setting ("device<TAB>name<TAB>tap_to_click").
 load_config() {
   local platform=$1 packaged_path=${2:-$packaged} edit=${3:-} home
   home=$(mktemp -d "$tmpdir/home.XXXXXX")
@@ -50,6 +51,7 @@ end
 
 local dsp = proxy()
 rawset(dsp, "exec_cmd", function(cmd) return { cmd = cmd } end)
+rawset(dsp, "global", function(name) return { cmd = "global " .. name } end)
 
 hl = setmetatable({
   dsp = dsp,
@@ -114,14 +116,21 @@ done
 pass "off a Mac, or on a Mac without omarchy-mac, the runtime alone adds nothing of the Mac's"
 
 keyboards="apple-spi-keyboard,apple-mtp-keyboard"
+# The runtime binds a menu or panel as a command, or (a runtime whose
+# bindings say { menu = ... } and whose shell registers the shortcut) as the
+# shell's global shortcut; either comes right after the focus bind.
 focus_then() {
-  [[ $'\n'"$apple"$'\n' == *$'\nbind\t'"$1"$'\tfocus '"$keyboards"$'\nbind\t'"$1"$'\t'"$2"$'\n'* ]] ||
-    fail "$1 focuses the built-in screen first when typed on the MacBook keyboard" "$apple"
+  local keys=$1 command
+  shift
+  for command in "$@"; do
+    [[ $'\n'"$apple"$'\n' == *$'\nbind\t'"$keys"$'\tfocus '"$keyboards"$'\nbind\t'"$keys"$'\t'"$command"$'\n'* ]] && return
+  done
+  fail "$keys focuses the built-in screen first when typed on the MacBook keyboard" "$apple"
 }
-focus_then "SUPER + SPACE" "omarchy-menu toggle"
-focus_then "SUPER + ESCAPE" "omarchy-menu toggle system"
+focus_then "SUPER + SPACE" "omarchy-menu toggle" "global omarchy:menu.root"
+focus_then "SUPER + ESCAPE" "omarchy-menu toggle system" "global omarchy:menu.system"
 focus_then "SUPER + K" "omarchy-menu-keybindings"
-focus_then "SUPER + CTRL + A" "omarchy-shell shell toggle omarchy.audio"
+focus_then "SUPER + CTRL + A" "omarchy-shell shell toggle omarchy.audio" "global omarchy:panel.omarchy.audio"
 focus_then "SUPER + CTRL + code:10" "omarchy-shell -q shell togglePanelAt right 1"
 for keys in "SUPER + RETURN" "SUPER + CTRL + E" "SUPER + CTRL + V" "PRINT" "SUPER + F12" "SUPER + 1"; do
   ! grep -qxF "bind"$'\t'"$keys"$'\tfocus '"$keyboards" <<<"$apple" || fail "$keys keeps today's focus" "$apple"
@@ -196,3 +205,30 @@ LUA
 [[ $(focus_with "DP-1* HDMI-A-1") == "done" ]] || fail "clamshell: no built-in screen, focus stays"
 [[ $(focus_with "eDP-1*") == "done" ]] || fail "built-in screen alone: nothing to do"
 pass "the built-in screen focus handles external, built-in only and clamshell layouts"
+
+# The decorator reads the command a bind runs: the dispatcher itself when it is
+# one, or the command Omarchy passes fourth when the bind reaches the shell
+# through its global shortcut.
+decorated() {
+  PATH="$tmpdir/apple-bin:$PATH" lua - "$packaged/default/hypr/platform/defaults/apple.lua" "$@" <<'LUA'
+local file, dispatcher, command = arg[1], arg[2], arg[3]
+hl = { device = function() end, bind = function(_, _, opts) if opts and opts.device then print("focus") end end }
+o = { bind_decorators = {}, bind = function() end, shell_succeeds = function() return true end }
+_G.omarchy_default_bindings = false
+dofile(file)
+if dispatcher == "global" then
+  dispatcher = { global = "omarchy:shortcut" }
+end
+o.bind_decorators[1]("SUPER + X", dispatcher, {}, command)
+LUA
+}
+[[ $(decorated "omarchy-menu toggle root") == "focus" ]] || fail "a menu command gets the focus bind"
+[[ $(decorated global "omarchy-menu toggle 'root'") == "focus" ]] || fail "a menu reached through the shell's shortcut gets the focus bind"
+[[ $(decorated "omarchy-menu toggle 'root'" "omarchy-menu toggle 'root'") == "focus" ]] || fail "a menu command passed twice gets the focus bind"
+[[ $(decorated global "omarchy-shell shell toggle 'omarchy.audio'") == "focus" ]] || fail "a panel reached through the shell's shortcut gets the focus bind"
+[[ -z $(decorated global "omarchy-shell shell toggle 'omarchy.emojis'") ]] || fail "the emoji picker reached through the shortcut keeps today's focus"
+[[ -z $(decorated global "omarchy-shell shell toggle 'omarchy.clipboard'") ]] || fail "the clipboard reached through the shortcut keeps today's focus"
+[[ -z $(decorated "omarchy-shell shell toggle omarchy.emojis") ]] || fail "the emoji picker command keeps today's focus"
+[[ -z $(decorated global "omarchy-launch-browser") ]] || fail "an app keeps today's focus"
+[[ -z $(decorated global) ]] || fail "an opaque dispatcher with no command keeps today's focus"
+pass "the focus bind follows the command a bind runs, whether it is the dispatcher or passed alongside it"
