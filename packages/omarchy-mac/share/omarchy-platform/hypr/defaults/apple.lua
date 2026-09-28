@@ -1,7 +1,7 @@
 -- omarchy-mac: Apple Silicon Hyprland defaults. Omarchy loads this directory
--- (default/hypr/platform/defaults in the packaged tree) before its own
--- defaults, so a chord bound here replaces Omarchy's default for it, and the
--- user's files, loaded after both, can still unbind or rebind any of it.
+-- (hypr/defaults under /usr/share/omarchy-platform) before its own defaults,
+-- so a chord bound here replaces Omarchy's default for it, and the user's
+-- files, loaded after both, can still unbind or rebind any of it.
 
 if not (o and o.shell_succeeds and o.shell_succeeds("omarchy-hw-apple-silicon")) then
   return

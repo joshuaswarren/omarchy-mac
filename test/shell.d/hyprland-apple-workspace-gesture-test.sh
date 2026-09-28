@@ -5,14 +5,27 @@ source "$(dirname "${BASH_SOURCE[0]}")/base-test.sh"
 require_command lua
 
 tmpdir=$(mktemp -d)
+# A versioned LUA_INIT would take precedence over the platform root seam.
+unset LUA_INIT LUA_INIT_5_5 LUA_INIT_5_4
 trap 'rm -rf "$tmpdir"' EXIT
 
 # The runtime under test (this tree, or another layout's through
-# OMARCHY_TEST_RUNTIME) with omarchy-mac staged, whose gesture Omarchy loads
-# from the packaged tree.
+# OMARCHY_TEST_RUNTIME) with omarchy-mac staged. A runtime with the fixed
+# platform root loads the gesture from /usr/share/omarchy-platform, which its
+# test seam (platform-root.lua through LUA_INIT) moves to the staged root; an
+# older one loads the copy in its own tree, through OMARCHY_PACKAGED_PATH.
 runtime=${OMARCHY_TEST_RUNTIME:-$ROOT}
 "$ROOT/packages/omarchy-mac/install" "$tmpdir/pkg" >/dev/null
-omarchy=$tmpdir/pkg/usr/share/omarchy
+staged=$tmpdir/pkg
+
+platform_env() {
+  local omarchy_path=$1 root=$2
+  if [[ -f $omarchy_path/test/shell.d/platform-root.lua ]]; then
+    printf '%s\n' "LUA_INIT=@$omarchy_path/test/shell.d/platform-root.lua" "OMARCHY_TEST_PLATFORM_ROOT=$root/usr/share/omarchy-platform"
+  else
+    printf '%s\n' "OMARCHY_PACKAGED_PATH=$root/usr/share/omarchy"
+  fi
+}
 
 mkdir -p "$tmpdir/apple-bin" "$tmpdir/other-bin"
 printf '#!/bin/sh\nexit 0\n' >"$tmpdir/apple-bin/omarchy-hw-apple-silicon"
@@ -25,16 +38,17 @@ chmod +x "$tmpdir"/*-bin/omarchy-hw-apple-silicon
 # gesture on the same fingers and mods is refused once an earlier one covers
 # its direction or axis, and the refusal is a config error.
 load_config() {
-  local platform="$1" edit="${2:-}" omarchy_path="${OMARCHY_UNDER_TEST:-$runtime}" packaged_path="${PACKAGED_UNDER_TEST:-$omarchy}"
-  local home
+  local platform="$1" edit="${2:-}" omarchy_path="${OMARCHY_UNDER_TEST:-$runtime}" staged_root="${PACKAGED_UNDER_TEST:-$staged}"
+  local home platform_vars
+  mapfile -t platform_vars < <(platform_env "$omarchy_path" "$staged_root")
   home=$(mktemp -d "$tmpdir/home.XXXXXX")
 
   mkdir -p "$home/.config"
   cp -R "$runtime/config/hypr" "$home/.config/hypr"
   [[ -z $edit ]] || printf '%s\n' "$edit" >>"$home/.config/hypr/input.lua"
 
-  HOME="$home" XDG_CONFIG_HOME="$home/.config" XDG_STATE_HOME="$home/.local/state" OMARCHY_PATH="$omarchy_path" OMARCHY_PACKAGED_PATH="$packaged_path" \
-    PATH="$tmpdir/$platform-bin:$PATH" lua <<'LUA'
+  HOME="$home" XDG_CONFIG_HOME="$home/.config" XDG_STATE_HOME="$home/.local/state" OMARCHY_PATH="$omarchy_path" \
+    PATH="$tmpdir/$platform-bin:$PATH" env "${platform_vars[@]}" lua <<'LUA'
 local function proxy()
   return setmetatable({}, {
     __index = function(self, key)
