@@ -67,7 +67,7 @@ OMARCHY_TEST_QS_ARGS="$wrapper_args" \
 grep -F -- 'ipc -n -p' "$wrapper_args" >/dev/null || fail "shell IPC targets the newest live Quickshell instance"
 pass "shell IPC targets the newest live Quickshell instance"
 
-restart_root="$test_tmp/restart-root"
+restart_root="$test_tmp/restart root"
 restart_bin="$restart_root/bin"
 restart_state="$test_tmp/restart-pids"
 restart_log="$test_tmp/restart.log"
@@ -163,8 +163,8 @@ SH
 cat >"$restart_bin/systemctl" <<'SH'
 #!/bin/bash
 
-if [[ ${1:-} == "--user" && ${2:-} == "show-environment" ]]; then
-  printf 'OMARCHY_PATH=%s\n' "$OMARCHY_TEST_SESSION_PATH"
+if [[ ${1:-} == "--user" && ${2:-} == "show-environment" && ${3:-} == "--output=json" ]]; then
+  jq -cn --arg path "$OMARCHY_TEST_SESSION_PATH" '{OMARCHY_PATH: $path}'
 elif [[ ${1:-} == "--user" && ${2:-} == "try-restart" ]]; then
   exit 0
 else
