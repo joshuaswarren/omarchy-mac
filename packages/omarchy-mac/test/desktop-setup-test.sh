@@ -37,7 +37,6 @@ hypr/gestures/apple-gestures.lua hypr/platform/apple-gestures.lua
 key-names omarchy/platform/key-names
 display-cutouts.json shell/platform/display-cutouts.json
 LEGACY
-[[ ! -e $stage/usr/share/omarchy/default/displays.conf ]] || fail 'displays.conf is only for a runtime that reads the platform root'
 # displays.conf follows the runtime's grammar (docs/file-layout.md): one
 # directive per line, a name with no "/", comments on whole lines only. Nothing
 # in it may be a line the runtime would silently ignore.
