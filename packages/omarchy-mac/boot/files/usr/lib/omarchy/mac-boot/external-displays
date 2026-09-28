@@ -24,8 +24,14 @@ sysfs=${OMARCHY_SYSFS:-/sys}
 state=${OMARCHY_MAC_DISPLAYS_STATE:-/run/omarchy-mac}
 plymouth=${OMARCHY_PLYMOUTH:-/usr/bin/plymouth}
 lid_state=${OMARCHY_LID_STATE:-/usr/lib/omarchy/mac-boot/lid-state}
+logger=${OMARCHY_LOGGER:-/usr/bin/logger}
 held=$state/external-displays-held
 released=$state/external-displays-released
+
+# udev drops a RUN program's output, so the hold logs to the journal.
+note() {
+  "$logger" -t omarchy-mac-external-displays -- "$*" 2>/dev/null || true
+}
 
 lock() {
   mkdir -p "$state" && exec 9>"$state/external-displays.lock" && flock -w 10 9
@@ -42,8 +48,8 @@ laptop() {
   [[ $chassis == laptop ]]
 }
 
-lid_open() {
-  [[ -x $lid_state && $("$lid_state" 2>/dev/null) == open ]]
+lid() {
+  [[ -x $lid_state ]] && "$lid_state" 2>/dev/null
 }
 
 # The card's connectors register right after it; the built-in panel is one.
@@ -57,18 +63,37 @@ panel_registered() {
 }
 
 hold() {
-  local card=$1 path connector
+  local card=$1 path connector why="" lid="" held_now=()
   [[ $card =~ ^card[0-9]+$ ]] || return 0
-  lock || return 0
-  [[ ! -e $released ]] && splash_running && laptop && lid_open && panel_registered "$card" || return 0
+  if ! lock; then
+    why="its lock is busy"
+  elif [[ -e $released ]]; then
+    why="the splash is over"
+  elif ! splash_running; then
+    why="no splash is running"
+  elif ! laptop; then
+    why="this Mac is not a laptop"
+  elif ! lid=$(lid) || [[ $lid != open ]]; then
+    why="the lid is ${lid:-unknown}"
+  elif ! panel_registered "$card"; then
+    why="it has no built-in panel"
+  fi
+  if [[ -n $why ]]; then
+    note "not holding $card's external displays: $why"
+    return 0
+  fi
   for path in "$sysfs/class/drm/$card"-*; do
     connector=${path##*/}
     [[ $connector == "$card"-eDP-* || ! -w $path/status ]] && continue
     grep -Fxq "$connector" "$held" 2>/dev/null && continue
     printf '%s\n' "$connector" >>"$held" || continue
-    printf 'off\n' >"$path/status" ||
-      echo "omarchy-mac-external-displays: could not hold $connector off" >&2
+    if printf 'off\n' >"$path/status"; then
+      held_now+=("${connector#"$card"-}")
+    else
+      note "could not hold $connector off"
+    fi
   done
+  (( ${#held_now[@]} )) && note "held $card's external displays off: ${held_now[*]}"
   return 0
 }
 

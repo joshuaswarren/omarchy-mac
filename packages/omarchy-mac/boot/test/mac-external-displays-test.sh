@@ -31,14 +31,16 @@ new_mac() {
   mkdir -p "$tmp/bin"
   printf '#!/bin/bash\n[[ -e %q ]]\n' "$tmp/splash" >"$tmp/bin/plymouth"
   printf '#!/bin/bash\n[[ -s %q ]] && cat %q\n' "$tmp/lid" "$tmp/lid" >"$tmp/bin/lid-state"
-  chmod +x "$tmp/bin/plymouth" "$tmp/bin/lid-state"
+  printf '#!/bin/bash\necho "$*" >>%q\n' "$tmp/journal" >"$tmp/bin/logger"
+  chmod +x "$tmp/bin/plymouth" "$tmp/bin/lid-state" "$tmp/bin/logger"
+  rm -f "$tmp/journal"
   : >"$tmp/splash"
   echo open >"$tmp/lid"
 }
 
 displays() {
   OMARCHY_SYSFS=$sys OMARCHY_MAC_DISPLAYS_STATE=$tmp/run OMARCHY_UUID_SOURCE=$tmp/uuid \
-    OMARCHY_PLYMOUTH=$tmp/bin/plymouth OMARCHY_LID_STATE=$tmp/bin/lid-state bash "$SCRIPT" "$@"
+    OMARCHY_PLYMOUTH=$tmp/bin/plymouth OMARCHY_LID_STATE=$tmp/bin/lid-state OMARCHY_LOGGER=$tmp/bin/logger bash "$SCRIPT" "$@"
 }
 
 status() { cat "$sys/class/drm/$1/status"; }
@@ -52,6 +54,8 @@ displays hold card2 || fail "hold succeeds"
 untouched || fail "the built-in panel and other cards are never held"
 [[ $(<"$tmp/run/external-displays-held") == $'card2-HDMI-A-1\ncard2-USB-1\ncard2-USB-2\ncard2-USB-3' ]] ||
   fail "hold records what it held: $(cat "$tmp/run/external-displays-held")"
+[[ $(<"$tmp/journal") == "-t omarchy-mac-external-displays -- held card2's external displays off: HDMI-A-1 USB-1 USB-2 USB-3" ]] ||
+  fail "hold logs what it held: $(cat "$tmp/journal")"
 displays hold card2 && (( $(wc -l <"$tmp/run/external-displays-held") == 4 )) || fail "a replayed add holds nothing twice"
 pass "an open laptop under the splash holds its external displays off"
 
@@ -70,6 +74,21 @@ for case in shut unknown desktop no-chassis no-splash released no-panel bad-name
   esac
   displays hold "$card" || fail "hold succeeds ($case)"
   [[ $(externals) == "    " && ! -s $tmp/run/external-displays-held ]] || fail "hold changes nothing ($case): $(externals)"
+  case $case in
+    shut) why="the lid is closed" ;;
+    unknown) why="the lid is unknown" ;;
+    desktop | no-chassis) why="this Mac is not a laptop" ;;
+    no-splash) why="no splash is running" ;;
+    released) why="the splash is over" ;;
+    no-panel) why="it has no built-in panel" ;;
+    bad-name) why="" ;;
+  esac
+  if [[ -n $why ]]; then
+    [[ $(<"$tmp/journal") == "-t omarchy-mac-external-displays -- not holding card2's external displays: $why" ]] ||
+      fail "hold logs why it held nothing ($case): $(cat "$tmp/journal" 2>/dev/null)"
+  else
+    [[ ! -e $tmp/journal ]] || fail "a bad card name is ignored silently"
+  fi
 done
 pass "a shut or unknown lid, a desktop Mac, no splash, a finished splash or no built-in panel holds nothing"
 
