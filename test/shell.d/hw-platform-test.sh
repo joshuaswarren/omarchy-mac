@@ -4,9 +4,19 @@ set -euo pipefail
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
+# /usr/bin as the runtime and omarchy-mac install it: the legacy alias beside
+# the runtime's predicate.
+usr_bin() {
+  mkdir -p "$1"
+  ln -sf "$ROOT"/bin/* "$1/"
+  ln -sf "$ROOT/packages/omarchy-mac/bin/omarchy-hw-apple" "$1/"
+}
+
 detector="$ROOT/bin/omarchy-hw-platform"
 test_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp"' EXIT
+legacy_bin=$test_tmp/usr-bin
+usr_bin "$legacy_bin"
 
 for platform in apple-silicon qualcomm generic-aarch64 generic; do
   fake_platform "$test_tmp/$platform" "$platform"
@@ -51,7 +61,7 @@ for platform in apple-silicon qualcomm generic-aarch64 generic; do
   apple_status=0
   OMARCHY_PROC_ROOT="$fixture/proc" PATH="$fixture/bin:$ROOT/bin:$PATH" "$ROOT/bin/omarchy-hw-apple-silicon" || apple_status=$?
   legacy_status=0
-  OMARCHY_PROC_ROOT="$fixture/proc" PATH="$fixture/bin:$ROOT/bin:$PATH" "$ROOT/bin/omarchy-hw-apple" || legacy_status=$?
+  OMARCHY_PROC_ROOT="$fixture/proc" PATH="$fixture/bin:$ROOT/bin:$PATH" "$legacy_bin/omarchy-hw-apple" || legacy_status=$?
   if [[ $platform == "apple-silicon" ]]; then
     (( apple_status == 0 && legacy_status == 0 )) || fail "the Apple predicates accept the Apple fixture"
   else

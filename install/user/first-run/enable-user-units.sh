@@ -20,7 +20,3 @@ systemctl --user enable --now \
   omarchy-fcitx5.service \
   omarchy-crash-watch.service \
   omarchy-brightness-keyboard-auto.service
-
-if omarchy-hw-apple-silicon; then
-  omarchy-mac-setup-user
-fi

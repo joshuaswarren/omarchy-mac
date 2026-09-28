@@ -13,7 +13,7 @@ cat >"$test_tmp/omarchy-hw-apple-silicon" <<'SH'
 #!/bin/bash
 [[ $APPLE == "1" ]]
 SH
-cat >"$test_tmp/omarchy-setup-mac" <<'SH'
+cat >"$test_tmp/omarchy-lifecycle-dispatch" <<'SH'
 #!/bin/bash
 printf '%s\n' "$*" >>"$CALLS"
 SH
@@ -27,5 +27,5 @@ run_migration() {
 run_migration 0
 [[ ! -e $test_tmp/calls ]] || fail "other platforms skip the Apple cursor migration"
 run_migration 1
-[[ $(<"$test_tmp/calls") == "--user" ]] || fail "Apple Silicon runs only the per-user Mac setup" "$(<"$test_tmp/calls")"
+[[ $(<"$test_tmp/calls") == "setup-user" ]] || fail "Apple Silicon runs only the per-user Mac setup" "$(<"$test_tmp/calls")"
 pass "the Apple cursor migration runs the per-user Mac setup on Apple Silicon only"

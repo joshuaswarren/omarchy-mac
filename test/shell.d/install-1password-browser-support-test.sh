@@ -18,6 +18,6 @@ grep -Fq 'install_chromium_extension' "$installer" ||
   fail "1Password still installs the Chromium extension"
 grep -Fq 'wrap_1password_for_agx' "$installer" ||
   fail "1Password still wraps the packaged binary for software GL"
-grep -Fq '1password' "$ROOT/install/hardware/apple/electron-gl.sh" ||
+grep -Fq '1password' "$ROOT/packages/omarchy-mac/lib/electron-launchers" ||
   fail "Apple Silicon still wraps 1Password for software GL"
 pass "1Password uses pkg-add and keeps the Chromium extension and AGX wrap"

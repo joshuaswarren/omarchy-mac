@@ -31,6 +31,50 @@ LUA
   install -Dm644 /dev/null "$cursor_marker"
 fi
 
+# Apple trackpads: natural scrolling and physical clicks. Asahi's
+# disable_while_typing does not stop stray taps, so tap-to-click stays off.
+# Appended once to the user's overrides, and only to a file that sets neither
+# key: a fork template or the user may have chosen otherwise.
+input="$config/hypr/input.lua"
+if [[ -f $input ]] && ! grep -q 'omarchy-apple-touchpad' "$input" &&
+  ! grep -Eq '^[[:space:]]*(natural_scroll|tap_to_click)[[:space:]]*=' "$input"; then
+  cat >>"$input" <<'LUA'
+
+-- omarchy-apple-touchpad: natural scrolling and physical clicks. On the Asahi
+-- touchpad, disable_while_typing alone does not stop stray taps while typing.
+hl.config({
+  input = {
+    touchpad = {
+      natural_scroll = true,
+      tap_to_click = false,
+    },
+  },
+})
+LUA
+fi
+
+# Chromium-family browsers built with VA-API, such as Brave, pick up the Apple
+# Video Decoder through libva-v4l2_request-avd and render green frames on some
+# streams, so each browser's flags turn AcceleratedVideoDecoder off: browsers
+# decode in software while mpv, ffmpeg and GStreamer keep the decoder. A
+# second --disable-features would replace the first, so the feature joins an
+# existing list. Runs again after a browser install writes a fresh flags file.
+# Browser installs write the flags in ~/.config; Chromium reads them from
+# XDG_CONFIG_HOME, which may be another directory.
+flag_dirs=("$config")
+[[ $config == "$HOME/.config" ]] || flag_dirs+=("$HOME/.config")
+for flags_dir in "${flag_dirs[@]}"; do
+  for flags in "$flags_dir"/{chromium,chrome,microsoft-edge-stable,brave,brave-origin}-flags.conf; do
+    [[ -f $flags ]] || continue
+    if grep -q -- '^--disable-features=' "$flags"; then
+      sed -i -E '/^--disable-features=/{/[=,]AcceleratedVideoDecoder([,[:space:]]|$)/!s/^(--disable-features=[^[:space:]]*)/\1,AcceleratedVideoDecoder/;s/^--disable-features=,/--disable-features=/}' "$flags"
+    else
+      [[ -z $(tail -c1 "$flags") ]] || echo >>"$flags"
+      echo '--disable-features=AcceleratedVideoDecoder' >>"$flags"
+    fi
+  done
+done
+
 # A matching user copy hides future vendor updates. Modified files and links stay.
 retire() {
   local file=$1 original=$2
@@ -44,40 +88,58 @@ retire() {
   fi
 }
 
-policies="$config/wireplumber/wireplumber.conf.d"
-retire "$policies/asahi-headset-mic.conf" "$legacy/asahi-headset-mic.conf"
-# mx-mac copied its speaker no-suspend policy into each user's configuration.
-for original in asahi-audio-no-suspend.conf asahi-audio-no-suspend-overlay.conf; do
-  retire "$policies/asahi-audio-no-suspend.conf" "$legacy/$original"
-done
-unit=omarchy-asahi-mic.service
-# Masks, custom fragments and custom wants links are user/administrator choices.
-# Never enable --force or replace them with a vendor fragment.
-for file in "$config/systemd/user/$unit" "$root/etc/systemd/user/$unit" "${XDG_RUNTIME_DIR:-/run/user/$UID}/systemd/user/$unit" "$root/run/systemd/user/$unit"; do
-  if [[ -e $file || -L $file ]]; then
-    echo "Preserving microphone service override: $file"
-    exit 0
+# The microphone mapper: enabled once, keeping every override and a later
+# disable.
+setup_microphone() {
+  policies="$config/wireplumber/wireplumber.conf.d"
+  retire "$policies/asahi-headset-mic.conf" "$legacy/asahi-headset-mic.conf"
+  # mx-mac copied its speaker no-suspend policy into each user's configuration.
+  for original in asahi-audio-no-suspend.conf asahi-audio-no-suspend-overlay.conf; do
+    retire "$policies/asahi-audio-no-suspend.conf" "$legacy/$original"
+  done
+  unit=omarchy-asahi-mic.service
+  # Masks, custom fragments and custom wants links are user/administrator choices.
+  # Never enable --force or replace them with a vendor fragment.
+  for file in "$config/systemd/user/$unit" "$root/etc/systemd/user/$unit" "${XDG_RUNTIME_DIR:-/run/user/$UID}/systemd/user/$unit" "$root/run/systemd/user/$unit"; do
+    if [[ -e $file || -L $file ]]; then
+      echo "Preserving microphone service override: $file"
+      return 0
+    fi
+  done
+  wants="$config/systemd/user/graphical-session.target.wants"
+  marker="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/mac-microphone-configured"
+  if [[ -f $marker && ! -e $wants/$unit && ! -L $wants/$unit ]]; then
+    echo "Preserving disabled microphone service"
+    return 0
   fi
-done
-wants="$config/systemd/user/graphical-session.target.wants"
-marker="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/mac-microphone-configured"
-if [[ -f $marker && ! -e $wants/$unit && ! -L $wants/$unit ]]; then
-  echo "Preserving disabled microphone service"
-  exit 0
-fi
-mkdir -p "$wants"
-if [[ ! -e $wants/$unit && ! -L $wants/$unit ]]; then
-  ln -s "/usr/lib/systemd/user/$unit" "$wants/$unit"
-elif [[ ! -L $wants/$unit || $(readlink "$wants/$unit") != "/usr/lib/systemd/user/$unit" ]]; then
-  echo "Preserving microphone activation override: $wants/$unit"
-  exit 0
-fi
-install -Dm644 /dev/null "$marker"
-# Offline user finalization needs no user bus or PipeWire endpoints. systemctl
-# --user finds the bus only through XDG_RUNTIME_DIR, which sudo -i clears even
-# while the owner's session socket exists.
-if [[ -z $root && -n ${XDG_RUNTIME_DIR:-} && -S $XDG_RUNTIME_DIR/bus ]]; then
-  systemctl --user daemon-reload
-  systemctl --user cat "$unit"
-  systemctl --user start "$unit"
+  mkdir -p "$wants"
+  if [[ ! -e $wants/$unit && ! -L $wants/$unit ]]; then
+    ln -s "/usr/lib/systemd/user/$unit" "$wants/$unit"
+  elif [[ ! -L $wants/$unit || $(readlink "$wants/$unit") != "/usr/lib/systemd/user/$unit" ]]; then
+    echo "Preserving microphone activation override: $wants/$unit"
+    return 0
+  fi
+  install -Dm644 /dev/null "$marker"
+  # Offline user finalization needs no user bus or PipeWire endpoints. systemctl
+  # --user finds the bus only through XDG_RUNTIME_DIR, which sudo -i clears even
+  # while the owner's session socket exists.
+  if [[ -z $root && -n ${XDG_RUNTIME_DIR:-} && -S $XDG_RUNTIME_DIR/bus ]]; then
+    systemctl --user daemon-reload
+    systemctl --user cat "$unit"
+    systemctl --user start "$unit"
+  fi
+}
+
+setup_microphone
+
+# Desktop entries for Steam and the Electron wrappers are the live machine's,
+# so a staging root skips them. Last, so a failure here leaves the cursor,
+# trackpad, browser flags and microphone done.
+if [[ -z $root ]]; then
+  # Steam runs x86 under FEX in a muvm VM; its launcher writes the user's
+  # desktop entry for itself and patches Steam's UI for it.
+  if command -v omarchy-launch-steam >/dev/null && { pacman -Q steam >/dev/null 2>&1 || [[ -d $HOME/.local/share/Steam ]]; }; then
+    omarchy-launch-steam --prepare
+  fi
+  "$root/usr/lib/omarchy-mac/electron-desktop-entries"
 fi

@@ -71,16 +71,8 @@ hl.config({
   misc = {
     key_press_enables_dpms = true,
     mouse_move_enables_dpms = true,
-    -- New windows and the launcher open on the focused screen, so a pointer
-    -- drifting onto another one shouldn't move it. A click, a hovered window
-    -- or a monitor key still does.
-    mouse_move_focuses_monitor = false,
   },
 })
-
--- Avoid stray taps while typing on the built-in Apple touchpad.
-hl.device({ name = "apple-mtp-multi-touch", tap_to_click = false })
-hl.device({ name = "apple-spi-trackpad", tap_to_click = false })
 
 -- Scroll nicely in the terminal.
 o.window("(Alacritty|kitty)", { scroll_touchpad = 1.5 })

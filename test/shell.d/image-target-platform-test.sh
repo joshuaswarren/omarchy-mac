@@ -4,6 +4,14 @@ set -euo pipefail
 
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
+# /usr/bin as the runtime and omarchy-mac install it: the legacy alias beside
+# the runtime's predicate.
+usr_bin() {
+  mkdir -p "$1"
+  ln -sf "$ROOT"/bin/* "$1/"
+  ln -sf "$ROOT/packages/omarchy-mac/bin/omarchy-hw-apple" "$1/"
+}
+
 # omarchy-hw-platform answers with the image-target manifest while a root is
 # being built, and with the hardware once it boots. Each world below is what one
 # detector run sees: image/ is the root, proc/ its /proc (the host's device tree
@@ -13,6 +21,8 @@ detector="$ROOT/bin/omarchy-hw-platform"
 umask 022
 test_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp"' EXIT
+legacy_bin=$test_tmp/usr-bin
+usr_bin "$legacy_bin"
 
 apple_manifest=$'format=1\nplatform=apple-silicon\n'
 
@@ -142,7 +152,7 @@ hostile: $overridden"
   env "${hostile_env[@]}" "${root_runner[@]}" "$ROOT/bin/omarchy-hw-apple-silicon" || apple_hostile=$?
   (( apple_hostile == apple_live )) || fail "the Apple predicate ignores a hostile root environment"
   apple_legacy=0
-  env "${hostile_env[@]}" "${root_runner[@]}" "$ROOT/bin/omarchy-hw-apple" || apple_legacy=$?
+  env "${hostile_env[@]}" "${root_runner[@]}" "$legacy_bin/omarchy-hw-apple" || apple_legacy=$?
   (( apple_legacy == apple_live )) || fail "the legacy Apple predicate ignores a hostile root environment"
   pass "root ignores fixture roots, PATH, BASH_ENV and exported functions"
 else

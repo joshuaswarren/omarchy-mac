@@ -24,15 +24,15 @@ omarchy_pacman_channel_qualified() {
 }
 
 # Render into a caller-owned temporary directory. Never sync or touch /etc.
-# Only Apple Silicon adds the Asahi repositories; every aarch64 platform uses
-# the Arch Linux ARM mirrors.
+# Only Apple Silicon adds the Asahi repositories, from omarchy-mac's templates;
+# every aarch64 platform uses the Arch Linux ARM mirrors.
 omarchy_pacman_stage() {
   local channel=$1 destination=$2 platform templates="$OMARCHY_PATH/default/pacman"
   local repositories mirrors
   omarchy_pacman_validate_channel "$channel" || return 1
   platform=$(omarchy-hw-platform) || return 1
   case $platform in
-    apple-silicon) repositories=$templates/apple-silicon mirrors=$templates/aarch64 ;;
+    apple-silicon) repositories=${OMARCHY_MAC_PACMAN_TEMPLATES:-/usr/share/omarchy-mac/pacman} mirrors=$templates/aarch64 ;;
     qualcomm | generic-aarch64) repositories=$templates/aarch64 mirrors=$templates/aarch64 ;;
     *) repositories=$templates mirrors=$templates ;;
   esac

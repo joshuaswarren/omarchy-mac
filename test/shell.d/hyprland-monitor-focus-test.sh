@@ -4,7 +4,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/base-test.sh"
 
 require_command lua
 
-lua - "$ROOT" <<'LUA' || fail "pointer crossing screens leaves monitor focus alone"
+lua - "$ROOT" <<'LUA' || fail "monitor focus follows the pointer across screens"
 local root = arg[1]
 local config = {}
 hl = {
@@ -20,10 +20,10 @@ hl = {
 }
 o = { window = function() end }
 dofile(root .. "/default/hypr/input.lua")
-assert(config.misc.mouse_move_focuses_monitor == false, "pointer motion does not focus another monitor")
-assert(config.input.follow_mouse == 1, "focus still follows the pointer between windows")
+assert(config.misc.mouse_move_focuses_monitor == nil, "pointer motion focuses the monitor it enters (Hyprland default)")
+assert(config.input.follow_mouse == 1, "focus follows the pointer between windows")
 LUA
-pass "pointer crossing screens leaves monitor focus alone"
+pass "monitor focus follows the pointer across screens"
 
 bindings=$(lua - "$ROOT" <<'LUA'
 local root = arg[1]

@@ -231,7 +231,7 @@ def install_flow() -> Diagram:
         Node("image", 698, 40, "Image written", ["root.img, boot.img,", "m1n1, device trees"], w=W, tone="tone-blue"),
         Node("stage2", 698, 240, "recoveryOS handoff", ["the user sets the boot", "policy, one reboot"], w=W, tone="tone-ext"),
         Node("firstboot", 472, 240, "omarchy-mac-boot", ["vendor firmware, HID,", "optional LUKS"], w=W, tone="tone-blue"),
-        Node("provision", 246, 240, "Owner provisioning", ["user, password, re-key,", "recovery passphrase"], w=W),
+        Node("provision", 246, 240, "Owner provisioning", ["user and password,", "disk re-key"], w=W),
         Node("desktop", 20, 240, "Omarchy desktop", ["Hyprland + Quickshell,", "omarchy update onward"], w=W, tone="tone-brand"),
     ]
     d.edges = [

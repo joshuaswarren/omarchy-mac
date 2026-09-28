@@ -56,7 +56,7 @@ cat >"$retry_bin/omarchy-provision-user" <<'SH'
 touch "$OMARCHY_TEST_FINALIZE_CALLED"
 exit 42
 SH
-for helper in omarchy-hook-install omarchy-notification-wait; do
+for helper in omarchy-hook-install omarchy-notification-wait omarchy-lifecycle-dispatch; do
   printf '#!/bin/bash\nexit 0\n' >"$retry_bin/$helper"
 done
 chmod +x "$retry_bin"/*

@@ -1,0 +1,17 @@
+#!/bin/bash -p
+
+# omarchy:summary=Detect Apple Silicon using the legacy command name.
+# omarchy:hidden=true
+
+# Preserved user services can still refer to this pre-Quattro name. The
+# runtime's predicate is installed beside it in /usr/bin; root never looks it
+# up through PATH, and unprivileged tests may stage this package alone.
+dir=${BASH_SOURCE[0]%/*}
+[[ $dir != "${BASH_SOURCE[0]}" ]] || dir=.
+if [[ -x $dir/omarchy-hw-apple-silicon ]]; then
+  exec "$dir/omarchy-hw-apple-silicon" "$@"
+elif (( EUID == 0 )); then
+  exec /usr/bin/omarchy-hw-apple-silicon "$@"
+else
+  exec omarchy-hw-apple-silicon "$@"
+fi

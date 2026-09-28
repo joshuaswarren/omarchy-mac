@@ -695,7 +695,7 @@ user_unit omarchy-crash-watch.service graphical-session.target
 output=$(env OMARCHY_MAC_MIGRATE_KILL_MID=defaults OMARCHY_MAC_MIGRATE_ROOT="$R" MIGRATE_FIXTURE="$F" PATH="$stubs:$PATH" \
   "$R/usr/bin/omarchy-mac-migrate" run 2>&1) && fail "the run is killed in the middle of its defaults"
 grep -q "Installing the default packages a fresh install has: avd-fw libva-v4l2_request-avd" <<<"$output" || fail "the missing Apple defaults are named" "$output"
-grep -q "No repository carries these default packages, so they stay missing: .*vulkan-asahi" <<<"$output" ||
+grep -q "No repository carries these default packages, so they stay missing: .*widevine" <<<"$output" ||
   fail "defaults no repository carries are named, not fatal" "$output"
 finish
 [[ $(grep -c '^transaction avd-fw libva-v4l2_request-avd$' "$F/pacman.log") == 1 ]] ||
@@ -705,8 +705,8 @@ grep -q "^avd-fw 0.1-1$" "$R/var/lib/pacman/local/packages" && grep -q "^libva-v
 ! grep -q "obs-studio\|zram-generator" <(grep '^transaction' "$F/pacman.log") || fail "the base list's applications and installed defaults are left alone"
 grep -q "^omarchy-mac-setup-system" "$F/boot.log" || fail "the Mac services a fresh install enables are set up"
 [[ $(grep -E '^(limine-boot activate|boot-check pending --boot-chain linux-aurora|omarchy-mac-setup-system)' "$F/boot.log" | cut -d' ' -f1-2 | tr '\n' '|') == \
-  "boot-check pending|limine-boot activate|boot-check pending|boot-check pending|omarchy-mac-setup-system |" ]] ||
-  fail "the boot files are checked again after the default packages' hooks" "$(cat "$F/boot.log")"
+  "boot-check pending|limine-boot activate|boot-check pending|boot-check pending|omarchy-mac-setup-system |boot-check pending|" ]] ||
+  fail "the boot files are checked again after the default packages' hooks and after the repairs" "$(cat "$F/boot.log")"
 [[ $(grep -n '' "$F/boot.log" | grep -E 'omarchy-mac-setup-system|systemctl enable omarchy-mac-migrate-verify' | cut -d: -f2- | head -n 2 | cut -d' ' -f1-2 | tr '\n' '|') == \
   "omarchy-mac-setup-system |systemctl enable|" ]] || fail "the defaults come before the reboot" "$(cat "$F/boot.log")"
 wants=$home/.config/systemd/user/graphical-session.target.wants
@@ -751,6 +751,217 @@ engine_units=$(sed -n 's/^fresh_user_units="\(.*\)"$/\1/p' "$ROOT/lib/migrate-en
 [[ -n $first_run_units && $first_run_units == "$engine_units" ]] ||
   fail "the migration enables the user units first run enables" "first run: $first_run_units; migration: $engine_units"
 pass "the migration's user units are first run's"
+
+# --- Repairs the runtime's Mac migrations made --------------------------------------
+
+# A runtime leaf the target's omarchy carries, from this repository.
+stage_leaf() { # path
+  mkdir -p "$(dirname "$R/usr/share/omarchy/$1")"
+  cp "$ROOT/../../../$1" "$R/usr/share/omarchy/$1"
+}
+
+broadcom_block="# Broadcom's firmware supplicant and authenticator fail the WPA four-way
+# handshake on Apple hardware, which surfaces as a rejected password. Disable
+# both so wpa_supplicant performs the handshake instead.
+options brcmfmac feature_disable=0x82000"
+
+# Two Omarchy users, one from quattro-upstream and one from mx-mac; alarm still
+# in wheel beside the owner; the Intel Broadcom block after an owner's line; LANG=C.
+repairs_fixture() {
+  new_fixture "$1"
+  printf 'root:x:0:0::/root:/bin/bash\nalarm:x:1000:1000::/home/alarm:/bin/bash\ntester:x:1001:1001::/home/tester:/bin/bash\nother:x:1002:1002::/home/other:/bin/bash\n' >"$R/etc/passwd"
+  printf 'root:x:0:\nwheel:x:998:alarm,tester\nalarm:x:1000:\n' >"$R/etc/group"
+  mkdir -p "$R/home/tester/.local/state/omarchy/migrations" "$R/home/other/.local/state/omarchy/migrations" "$R/home/alarm" "$R/etc/modprobe.d"
+  : >"$R/home/tester/.local/state/omarchy/migrations/1789132067.sh"
+  : >"$R/home/other/.local/state/omarchy/migrations/1790305681.sh"
+  printf 'options brcmfmac roamoff=1\n%s\n' "$broadcom_block" >"$R/etc/modprobe.d/brcmfmac.conf"
+  echo LANG=C >"$R/etc/locale.conf"
+  printf '#en_US.UTF-8 UTF-8\n#de_DE.UTF-8 UTF-8\n' >"$R/etc/locale.gen"
+  stage_leaf install/config/locale.sh
+  mkdir -p "$R/usr/share/omarchy/install/config"
+  cat >"$R/usr/share/omarchy/install/config/snapper.sh" <<'LEAF'
+# Stands in for the runtime's Snapper leaf: its exit status is the fixture's.
+echo "snapper-leaf OMARCHY_PATH=$OMARCHY_PATH" >>"$MIGRATE_FIXTURE/boot.log"
+exit "$(cat "$MIGRATE_FIXTURE/snapper-status" 2>/dev/null || echo 0)"
+LEAF
+}
+
+repaired_names="1789146110 1789148088 1789158179 1789172112 1790327324"
+
+repairs_fixture repairs
+kill_after preflight
+output=$(env OMARCHY_MAC_MIGRATE_KILL_MID=broadcom OMARCHY_MAC_MIGRATE_ROOT="$R" MIGRATE_FIXTURE="$F" PATH="$stubs:$PATH" \
+  "$R/usr/bin/omarchy-mac-migrate" run 2>&1) && fail "the run is killed in the middle of the Broadcom repair"
+[[ -f $R/var/lib/omarchy/migrations/1789172112-initramfs-pending ]] || fail "the rebuild is owed before the Broadcom block goes"
+finish
+[[ $(<"$R/etc/modprobe.d/brcmfmac.conf") == "options brcmfmac roamoff=1" ]] || fail "only the Broadcom block goes" "$(cat "$R/etc/modprobe.d/brcmfmac.conf")"
+[[ ! -e $R/var/lib/omarchy/migrations/1789172112-initramfs-pending && $(grep -c '^omarchy-mac-boot-update' "$F/boot.log") == 1 ]] ||
+  fail "the boot image is rebuilt once, across the interrupted repair" "$(cat "$F/boot.log")"
+[[ $(grep '^wheel:' "$R/etc/group") == "wheel:x:998:tester" ]] || fail "alarm leaves wheel beside another administrator" "$(cat "$R/etc/group")"
+[[ $(<"$R/etc/locale.conf") == "LANG=en_US.UTF-8" ]] && grep -qx 'en_US.UTF-8 UTF-8' "$R/etc/locale.gen" && grep -qx '#de_DE.UTF-8 UTF-8' "$R/etc/locale.gen" &&
+  grep -q '^locale-gen' "$F/boot.log" || fail "a C locale becomes en_US.UTF-8, generated" "$(cat "$R/etc/locale.conf" "$R/etc/locale.gen")"
+grep -qx "snapper-leaf OMARCHY_PATH=$R/usr/share/omarchy" "$F/boot.log" || fail "the Snapper leaf runs" "$(cat "$F/boot.log")"
+grep -qx 'omarchy-mac-setup-keyboard 3' "$F/boot.log" && ! grep -q '^omarchy-mac-setup-keyboard [12]' "$F/boot.log" ||
+  fail "mx-mac's history names the generated keyboard line" "$(grep keyboard "$F/boot.log")"
+! grep -q '^omarchy-drive-recover' "$F/boot.log" || fail "an encrypted Mac arms no password reset with a recovery key"
+[[ $(sed -n "$(grep -n '^omarchy-mac-setup-system' "$F/boot.log" | tail -n 1 | cut -d: -f1),\$p" "$F/boot.log" |
+  grep -E '^(omarchy-mac-setup-system|omarchy-mac-boot-update|omarchy-mac-setup-keyboard|boot-check pending|systemctl enable omarchy-mac-migrate-verify)' | head -n 5 | cut -d' ' -f1 | tr '\n' '|') == \
+  "omarchy-mac-setup-system|omarchy-mac-boot-update|omarchy-mac-setup-keyboard|boot-check|systemctl|" ]] ||
+  fail "the repairs follow the Mac services, and the boot files are checked after them, before the reboot" "$(cat "$F/boot.log")"
+for user in tester other; do
+  for name in $repaired_names; do
+    [[ -f $R/home/$user/.local/state/omarchy/migrations/$name.sh ]] || fail "$user has the repaired migration $name recorded as done"
+  done
+done
+[[ ! -e $R/home/alarm/.local ]] || fail "an account Omarchy never ran for gets no records"
+pass "the engine removes the Broadcom block, retires alarm from wheel, sets the locale, runs Snapper, and hands over the keyboard, and records those migrations as done"
+
+output=$(migrate run 2>&1) || fail "a second run succeeds" "$output"
+[[ $(grep -c '^omarchy-mac-boot-update' "$F/boot.log") == 1 && $(<"$R/etc/modprobe.d/brcmfmac.conf") == "options brcmfmac roamoff=1" ]] ||
+  fail "nothing is repaired twice"
+pass "the repairs are not repeated once the migration is complete"
+
+# Only quattro-upstream's history, alarm the Omarchy user, the block alone in
+# a linked file, a chosen locale, Snapper left for repair and an unencrypted root.
+repairs_fixture repairs-kept
+rm "$R/home/other/.local/state/omarchy/migrations/1790305681.sh"
+mkdir -p "$R/home/alarm/.local/state/omarchy"
+mkdir -p "$R/etc/brcm"
+printf '%s\n' "$broadcom_block" >"$R/etc/brcm/brcmfmac.conf"
+ln -sf ../brcm/brcmfmac.conf "$R/etc/modprobe.d/brcmfmac.conf"
+echo LANG=de_DE.UTF-8 >"$R/etc/locale.conf"
+echo 3 >"$F/snapper-status"
+echo /dev/nvme0n1p5 >"$F/root-source"
+printf '/dev/nvme0n1p5 part btrfs\n/dev/nvme0n1 disk \n' >"$F/lsblk"
+finish
+grep -qx 'omarchy-mac-setup-keyboard 1' "$F/boot.log" || fail "quattro-upstream's history names fnmode=1" "$(grep keyboard "$F/boot.log")"
+[[ $(grep '^wheel:' "$R/etc/group") == "wheel:x:998:alarm,tester" ]] && ! grep -q '^gpasswd' "$F/boot.log" || fail "alarm stays in wheel while it is an Omarchy user"
+[[ -L $R/etc/modprobe.d/brcmfmac.conf && ! -s $R/etc/brcm/brcmfmac.conf ]] || fail "a linked Broadcom file is emptied through its link"
+[[ $(<"$R/etc/locale.conf") == "LANG=de_DE.UTF-8" ]] && ! grep -q '^locale-gen' "$F/boot.log" || fail "a chosen locale stays"
+[[ -f $R/home/tester/.local/state/omarchy/migrations/1789148088.sh ]] ||
+  fail "a Snapper layout left for manual repair counts as done"
+[[ ! -e $R/home/tester/.local/state/omarchy/migrations/1789158179.sh ]] || fail "alarm's wheel membership is left to the runtime's migration where alarm uses Omarchy"
+pass "alarm as the Omarchy user, chosen locales, preserved Snapper layouts and unencrypted roots are left alone"
+
+# alarm with no other existing administrator; the Broadcom block alone in its
+# file, killed after it went but before the rebuild.
+repairs_fixture repairs-alone
+printf 'root:x:0:\nwheel:x:998:alarm,ghost\n' >"$R/etc/group"
+printf '%s\n' "$broadcom_block" >"$R/etc/modprobe.d/brcmfmac.conf"
+kill_after preflight
+output=$(env OMARCHY_MAC_MIGRATE_KILL_MID=broadcom-rebuild OMARCHY_MAC_MIGRATE_ROOT="$R" MIGRATE_FIXTURE="$F" PATH="$stubs:$PATH" \
+  "$R/usr/bin/omarchy-mac-migrate" run 2>&1) && fail "the run is killed before the Broadcom rebuild"
+[[ ! -e $R/etc/modprobe.d/brcmfmac.conf && -f $R/var/lib/omarchy/migrations/1789172112-initramfs-pending ]] ||
+  fail "a file holding only the block is removed, the rebuild still owed"
+finish
+[[ $(grep -c '^omarchy-mac-boot-update' "$F/boot.log") == 1 && ! -e $R/var/lib/omarchy/migrations/1789172112-initramfs-pending ]] ||
+  fail "the owed rebuild runs on the resumed step" "$(cat "$F/boot.log")"
+[[ $(grep '^wheel:' "$R/etc/group") == "wheel:x:998:alarm,ghost" ]] || fail "alarm stays when no other existing account is in wheel"
+pass "alarm stays in wheel when it is the only existing administrator, and an owed Broadcom rebuild runs after a kill"
+
+repairs_fixture repairs-failing
+for snapper_status in 1 2; do
+  echo "$snapper_status" >"$F/snapper-status"
+  status=0
+  output=$(migrate run 2>&1) || status=$?
+  (( status == 1 )) && grep -q "cannot set up Snapper for the root filesystem" <<<"$output" || fail "a Snapper leaf exiting $snapper_status fails the step" "$output"
+done
+[[ $(migrate status) == *"failed at defaults"* ]] && ! grep -q "^systemctl enable omarchy-mac-migrate-verify" "$F/boot.log" ||
+  fail "the reboot waits for the repairs"
+rm "$F/snapper-status"
+: >"$F/locale-gen-fail"
+status=0
+output=$(migrate run 2>&1) || status=$?
+(( status == 1 )) && grep -q "cannot set up the UTF-8 locale" <<<"$output" || fail "a locale that cannot be generated fails the step" "$output"
+rm "$F/locale-gen-fail"
+finish
+[[ $(<"$R/etc/locale.conf") == "LANG=en_US.UTF-8" ]] || fail "the retried step sets the locale"
+pass "a repair that fails stops the migration before its reboot, and the next run repeats it"
+
+new_fixture repairs-missing
+printf 'tester:x:1000:1000::/home/tester:/bin/bash\n' >"$R/etc/passwd"
+mkdir -p "$R/home/tester/.local/state/omarchy"
+output=$(migrate run 2>&1) || fail "a target without the runtime leaves migrates" "$output"
+grep -q "no Snapper setup leaf" <<<"$output" && grep -q "no locale setup leaf" <<<"$output" || fail "missing leaves are reported" "$output"
+finish
+for name in 1789148088 1789146110; do
+  [[ ! -e $R/home/tester/.local/state/omarchy/migrations/$name.sh ]] || fail "a repair that did not run leaves its migration to the runtime: $name"
+done
+for name in 1789158179 1789172112 1790327324; do
+  [[ -f $R/home/tester/.local/state/omarchy/migrations/$name.sh ]] || fail "the repairs that ran are recorded: $name"
+done
+grep -qx 'omarchy-mac-setup-keyboard 2' "$F/boot.log" || fail "without a fork's history the install leaf's fnmode=2 is the generated line"
+pass "a runtime without a repair's leaf leaves that migration pending; the other repairs are recorded"
+
+# --- User setup that fails stays pending ------------------------------------------
+
+new_fixture user-pending
+printf 'tester:x:1000:1000::/home/tester:/bin/bash\n' >"$R/etc/passwd"
+home=$R/home/tester
+mkdir -p "$home/.local/state/omarchy" "$home/.config/systemd/user"
+kill_after preflight
+user_unit omarchy-crash-watch.service graphical-session.target
+chmod 555 "$home/.config/systemd/user" "$home/.local/state/omarchy"
+: >"$F/omarchy-mac-setup-user-fail"
+output=$(env OMARCHY_MAC_MIGRATE_KILL_MID=user-setup OMARCHY_MAC_MIGRATE_ROOT="$R" MIGRATE_FIXTURE="$F" PATH="$stubs:$PATH" \
+  "$R/usr/bin/omarchy-mac-migrate" run 2>&1) && fail "the run is killed before its user setup"
+output=$(migrate run 2>&1) || fail "user setup that fails does not stop the migration" "$output"
+grep -q "Could not apply omarchy-crash-watch.service for tester" <<<"$output" && grep -q "Could not apply setup-user for tester" <<<"$output" &&
+  grep -q "Could not apply settle:" <<<"$output" || fail "each failed item is reported" "$output"
+[[ $(cut -d: -f1 "$(state_dir)/user-pending") == $'tester omarchy-crash-watch.service\ntester settle\ntester setup-user' ]] &&
+  grep -q "^tester settle:.*1790347292" "$(state_dir)/user-pending" || fail "failed items are pending, the settled names with them" "$(cat "$(state_dir)/user-pending")"
+[[ $(migrate status) == *"User setup pending"*"tester settle; tester setup-user"* ]] || fail "status lists pending user setup" "$(migrate status)"
+chmod 755 "$home/.local/state/omarchy"
+output=$(migrate verify 2>&1) || fail "verify before the reboot retries pending user setup" "$output"
+[[ -f $home/.local/state/omarchy/migrations/1790347292.sh && -f $home/.local/state/omarchy/migrations/1790327324.sh ]] &&
+  ! grep -q "settle" "$(state_dir)/user-pending" || fail "a pending settle records its names at the next verify, before the reboot" "$(cat "$(state_dir)/user-pending")"
+[[ $(migrate status) == *"waiting for a reboot"* ]] || fail "the migration still waits for its reboot" "$(migrate status)"
+reboot_into_aurora
+output=$(migrate verify 2>&1) || fail "verify completes the migration with user setup pending" "$output"
+[[ -f $(state_dir)/complete && -s $(state_dir)/user-pending ]] || fail "the migration completes while user setup stays pending"
+! grep -q "^systemctl disable omarchy-mac-migrate-verify" "$F/boot.log" || fail "the post-reboot unit stays enabled while user setup is pending"
+grep -q '^ConditionPathExists=|/var/lib/omarchy-mac/migration/user-pending$' "$R/usr/lib/systemd/system/omarchy-mac-migrate-verify.service" &&
+  grep -q '^ConditionPathExists=|/var/lib/omarchy-mac/migration/reboot-pending$' "$R/usr/lib/systemd/system/omarchy-mac-migrate-verify.service" ||
+  fail "the post-reboot unit starts for pending user setup too"
+chmod 755 "$home/.config/systemd/user"
+output=$(migrate verify 2>&1) || fail "a boot retries pending user setup" "$output"
+[[ $(<"$(state_dir)/user-pending") == "tester setup-user" ]] || fail "what succeeds leaves the pending record" "$(cat "$(state_dir)/user-pending")"
+[[ $(readlink "$home/.config/systemd/user/graphical-session.target.wants/omarchy-crash-watch.service") == /usr/lib/systemd/user/omarchy-crash-watch.service ]] ||
+  fail "the retried unit is enabled"
+rm "$F/omarchy-mac-setup-user-fail"
+before=$(grep -c "^omarchy-mac-setup-user" "$F/boot.log")
+output=$(migrate verify 2>&1) || fail "the last retry succeeds" "$output"
+[[ ! -e $(state_dir)/user-pending && $(grep -c "^omarchy-mac-setup-user" "$F/boot.log") == $(( before + 1 )) ]] || fail "the pending setup-user ran once more and is done"
+grep -q "^systemctl disable omarchy-mac-migrate-verify" "$F/boot.log" || fail "the post-reboot unit is released once nothing is pending"
+output=$(migrate verify 2>&1) && [[ $(grep -c "^omarchy-mac-setup-user" "$F/boot.log") == $(( before + 1 )) ]] || fail "nothing runs again once done"
+pass "a user's unit or setup that fails stays pending, runs again at each boot until it succeeds, then releases the post-reboot unit"
+
+# Pending setup survives a new target whose preflight refuses, and a unit the
+# user turned off after the migration stays off.
+new_fixture user-pending-next
+printf 'tester:x:1000:1000::/home/tester:/bin/bash\n' >"$R/etc/passwd"
+home=$R/home/tester
+mkdir -p "$home/.local/state/omarchy"
+kill_after preflight
+user_unit omarchy-crash-watch.service graphical-session.target
+: >"$F/omarchy-mac-setup-user-fail"
+finish
+[[ $(<"$(state_dir)/user-pending") == "tester setup-user" ]] || fail "setup-user is pending"
+wants=$home/.config/systemd/user/graphical-session.target.wants
+[[ -L $wants/omarchy-crash-watch.service ]] || fail "the unit that succeeded is enabled"
+rm "$wants/omarchy-crash-watch.service"
+printf 'format=1\ntype=repository\nchannel=stable\nserver=file://%s/repos/omarchy\n' "$F" >"$R/etc/omarchy-mac/migration-target"
+mkdir -p "$R/var/lib/omarchy/mac-first-boot" && : >"$R/var/lib/omarchy/mac-first-boot/pending"
+status=0
+output=$(migrate run 2>&1) || status=$?
+(( status == 75 )) || fail "the new target is refused" "status $status: $output"
+[[ $(<"$(state_dir)/user-pending") == "tester setup-user" ]] || fail "pending user setup survives the refused migration"
+rm "$F/omarchy-mac-setup-user-fail"
+output=$(migrate verify 2>&1) || fail "a boot retries pending setup between migrations" "$output"
+[[ ! -e $(state_dir)/user-pending ]] && grep -q "^systemctl disable omarchy-mac-migrate-verify" "$F/boot.log" ||
+  fail "pending setup finishes between migrations and releases the unit" "$output"
+[[ ! -e $wants/omarchy-crash-watch.service && ! -L $wants/omarchy-crash-watch.service ]] || fail "a unit the user turned off since stays off: only pending items run again"
+pass "pending user setup survives a refused next migration and finishes at the next boot, running only what was pending"
 
 # --- A tester already on Aurora and Limine ------------------------------------
 

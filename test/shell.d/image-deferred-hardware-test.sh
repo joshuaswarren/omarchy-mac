@@ -470,6 +470,88 @@ grep -qx 'ConditionPathExists=/var/lib/omarchy/image/deferred-steps' "$unit_sour
   fail "the first-boot hardware service runs on the queue before owner setup and the login screen"
 pass "the first-boot hardware service runs on the queue before owner setup and the login screen"
 
+# --- Bluetooth on the first boot ---------------------------------------------
+
+# The adapter brings up bluetooth.target before the first boot runs the
+# Bluetooth leaf, and a target never starts a unit enabled after its start job
+# was made, so that boot has to start bluetooth.service itself. Nothing else
+# does: an install or a rerun of hardware setup leaves the service as it finds it.
+bt_fixture="$test_tmp/omarchy-bluetooth"
+mkdir -p "$bt_fixture/install/helpers" "$bt_fixture/install/provisioning" "$bt_fixture/install/hardware"
+cp "$ROOT/install/helpers/logging.sh" "$ROOT/install/helpers/image-target.sh" "$bt_fixture/install/helpers/"
+cp "$unit_source" "$bt_fixture/install/provisioning/"
+cp "$ROOT/install/hardware/bluetooth.sh" "$bt_fixture/install/hardware/"
+cp "$fixture/install/hardware/c.sh" "$bt_fixture/install/hardware/"
+printf 'run_logged "$OMARCHY_INSTALL/hardware/%s"\n' bluetooth.sh c.sh >"$bt_fixture/install/hardware/all.sh"
+
+bt_bin="$test_tmp/bt-bin"
+mkdir -p "$bt_bin"
+cat >"$bt_bin/systemctl" <<'SH'
+#!/bin/bash
+printf '%s\n' "$*" >>"$SYSTEMCTL_CALLS"
+case $* in
+  "start --no-block bluetooth.service") [[ ! -e $BT_START_REFUSED ]] ;;
+  *) exit 0 ;;
+esac
+SH
+chmod +x "$bt_bin/systemctl"
+export SYSTEMCTL_CALLS="$test_tmp/systemctl-calls" BT_START_REFUSED="$test_tmp/bt-start-refused"
+bt_path="$bt_bin:$base_path"
+
+bt_image() {
+  local root
+  root=$(new_root "bt-$1")
+  write_manifest "$root"
+  OMARCHY_IMAGE_ROOT="$root" OMARCHY_PATH="$bt_fixture" OMARCHY_INSTALL_LOG_FILE="$root/var/log/omarchy-install.log" \
+    PATH="$bt_path" "$apply_hardware" --defer-provisioning >/dev/null || fail "the Bluetooth fixture image builds"
+  printf '%s\n' "$root"
+}
+
+bt_first_boot() {
+  rm -f "$SYSTEMCTL_CALLS" "$RUNS"
+  OMARCHY_IMAGE_ROOT="$1" OMARCHY_PATH="$bt_fixture" OMARCHY_PROC_ROOT="$test_tmp/hw/proc" \
+    PATH="$bt_path" "$ROOT/bin/omarchy-provision-hardware" >/dev/null 2>&1
+}
+
+started=$'enable bluetooth.service\nstart --no-block bluetooth.service'
+
+reset_logs
+rm -f "$BT_START_REFUSED" "$SYSTEMCTL_CALLS"
+root=$(bt_image started)
+[[ ! -e $SYSTEMCTL_CALLS ]] || fail "an image build touches no Bluetooth unit" "$(cat "$SYSTEMCTL_CALLS")"
+bt_first_boot "$root" || fail "the first boot finishes the Bluetooth leaf"
+[[ $(<"$SYSTEMCTL_CALLS") == "$started" ]] ||
+  fail "the first boot enables Bluetooth and starts it without waiting for the job" "$(<"$SYSTEMCTL_CALLS")"
+[[ $(cat "$RUNS") == c && ! -e $root/var/lib/omarchy/image/deferred-steps ]] ||
+  fail "the first boot goes on past the Bluetooth leaf"
+pass "the first boot enables Bluetooth and starts it in the same session"
+
+touch "$BT_START_REFUSED"
+root=$(bt_image refused)
+bt_first_boot "$root" || fail "a refused Bluetooth start does not fail the first boot"
+[[ $(<"$SYSTEMCTL_CALLS") == "$started" && $(cat "$RUNS") == c && ! -e $root/var/lib/omarchy/image/deferred-steps ]] ||
+  fail "a refused Bluetooth start leaves the step done and the queue going" "$(<"$SYSTEMCTL_CALLS")"
+pass "a refused Bluetooth start does not fail the first boot"
+rm -f "$BT_START_REFUSED"
+
+# A later boot that retries the queue is still the machine's own first setup.
+root=$(bt_image retry)
+mv "$root/var/lib/omarchy/image/target" "$root/var/lib/omarchy/image/target.booted"
+bt_first_boot "$root" || fail "a retried queue finishes"
+[[ $(<"$SYSTEMCTL_CALLS") == "$started" ]] ||
+  fail "a retried queue starts Bluetooth like the first run" "$(<"$SYSTEMCTL_CALLS")"
+pass "a retried queue starts Bluetooth like the first run"
+
+# Hardware setup outside the first boot, even with the marker inherited.
+rm -f "$SYSTEMCTL_CALLS" "$RUNS"
+root=$(new_root bt-live)
+OMARCHY_IMAGE_DEFERRED_HARDWARE=1 OMARCHY_IMAGE_ROOT="$root" OMARCHY_PATH="$bt_fixture" \
+  OMARCHY_INSTALL_LOG_FILE="$root/var/log/omarchy-install.log" PATH="$bt_path" "$apply_hardware" --defer-provisioning >/dev/null ||
+  fail "hardware setup without a manifest runs the Bluetooth leaf"
+[[ $(<"$SYSTEMCTL_CALLS") == "enable bluetooth.service" && $(cat "$RUNS") == c ]] ||
+  fail "hardware setup outside the first boot only enables Bluetooth" "$(<"$SYSTEMCTL_CALLS")"
+pass "hardware setup outside the first boot only enables Bluetooth, as an install always has"
+
 # --- Root ignores the fixture root ------------------------------------------
 
 # As namespaced root the fixture root in the environment is ignored: the

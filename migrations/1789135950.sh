@@ -1,7 +1,5 @@
 echo "Use macOS-like trackpad defaults on Apple Silicon"
 
-# Fresh installs run install/user/hardware/apple/touchpad.sh. Existing Apple
-# Silicon users still have the shipped traditional-scroll default.
-leaf="$OMARCHY_PATH/install/user/hardware/apple/touchpad.sh"
-[[ -f $leaf ]] || exit 0
-source "$leaf"
+# omarchy-mac's user setup appends the trackpad defaults once; this runs it for
+# users set up before.
+omarchy-lifecycle-dispatch setup-user

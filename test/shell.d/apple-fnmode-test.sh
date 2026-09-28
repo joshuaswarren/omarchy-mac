@@ -6,8 +6,6 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 
 leaf="$ROOT/install/hardware/fix-fkeys.sh"
 migration="$ROOT/migrations/1790327324.sh"
-media="$ROOT/default/hypr/bindings/media.lua"
-utilities="$ROOT/default/hypr/bindings/utilities.lua"
 
 test_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp"' EXIT
@@ -102,29 +100,3 @@ matches=$(grep -l 'fnmode' "$ROOT"/migrations/*.sh)
 [[ $matches == "$migration" ]] ||
   fail "one migration changes the keyboard mode, so an update rebuilds the boot image once" "$matches"
 pass "one migration changes the keyboard mode, so an update rebuilds the boot image once"
-
-grep -F 'omarchy-brightness-shift up' "$media" >/dev/null ||
-  fail "SHIFT+brightness up goes through the shift wrapper"
-grep -F 'omarchy-brightness-shift down' "$media" >/dev/null ||
-  fail "SHIFT+brightness down goes through the shift wrapper"
-! grep -F 'omarchy-brightness-display 100%' "$media" >/dev/null ||
-  fail "SHIFT+brightness no longer calls display max directly"
-pass "SHIFT+brightness uses the hardware-gated wrapper"
-
-PATH="$stub_bin:$PATH" APPLE_SILICON=0 "$ROOT/bin/omarchy-brightness-shift" up |
-  grep -qx 'display 100%' || fail "SHIFT+brightness up is display max on x86"
-PATH="$stub_bin:$PATH" APPLE_SILICON=0 "$ROOT/bin/omarchy-brightness-shift" down |
-  grep -qx 'display 1%' || fail "SHIFT+brightness down is display min on x86"
-pass "SHIFT+brightness is display max/min off Apple Silicon"
-
-PATH="$stub_bin:$PATH" APPLE_SILICON=1 "$ROOT/bin/omarchy-brightness-shift" up |
-  grep -qx 'keyboard up' || fail "SHIFT+brightness up is keyboard backlight on Apple Silicon"
-PATH="$stub_bin:$PATH" APPLE_SILICON=1 "$ROOT/bin/omarchy-brightness-shift" down |
-  grep -qx 'keyboard down' || fail "SHIFT+brightness down is keyboard backlight on Apple Silicon"
-pass "SHIFT+brightness is keyboard backlight on Apple Silicon"
-
-grep -F 'SUPER + F12' "$utilities" >/dev/null || fail "SUPER+F12 captures without PRINT"
-grep -F 'SUPER + XF86AudioRaiseVolume' "$utilities" >/dev/null ||
-  fail "SUPER+volume-up captures on the Apple media row"
-grep -F 'PRINT' "$utilities" >/dev/null || fail "PRINT capture binds remain"
-pass "capture binds cover PRINT, F-keys, and the Apple media row"

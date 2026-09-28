@@ -1,0 +1,25 @@
+#!/bin/bash -p
+
+# omarchy-lifecycle-dispatch setup-user, run as the user being set up, never
+# root: at the end of user finalization, where there may be no session, and
+# again in first run once the session is up. omarchy-mac-setup-user needs no
+# session and re-checks the platform.
+
+set -euo pipefail
+
+if (( $# != 0 )); then
+  echo "Usage: setup-user" >&2
+  exit 2
+fi
+if (( EUID == 0 )); then
+  echo "Error: setup-user runs as the user being set up, never as root" >&2
+  exit 1
+else
+  # The dispatcher passes HOME; a caller that emptied its environment gets the
+  # account's own.
+  [[ -n ${HOME:-} ]] || HOME=$(getent passwd "$EUID" | cut -d: -f6)
+  export HOME
+  # Unprivileged tests stage the package under a fixture root.
+  root=${OMARCHY_MAC_ROOT:-}
+  exec "$root/usr/bin/omarchy-mac-setup-user" ${root:+"$root"}
+fi

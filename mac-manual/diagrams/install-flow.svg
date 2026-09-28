@@ -47,8 +47,8 @@
 <g class="node">
 <rect x="246" y="240" width="196" height="74"/>
 <text class="n-title" x="258" y="261">Owner provisioning</text>
-<text class="n-sub" x="258" y="280">user, password, re-key,</text>
-<text class="n-sub" x="258" y="297">recovery passphrase</text>
+<text class="n-sub" x="258" y="280">user and password,</text>
+<text class="n-sub" x="258" y="297">disk re-key</text>
 </g>
 <g class="node tone-brand">
 <rect x="20" y="240" width="196" height="74"/>

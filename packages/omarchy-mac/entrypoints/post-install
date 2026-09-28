@@ -1,0 +1,35 @@
+#!/bin/bash -p
+
+# omarchy-lifecycle-dispatch post-install <app>, run as the user once an
+# installer put <app> in place and did Omarchy's own setup of it. A
+# Chromium-family browser gets the Mac user setup again, which turns its
+# hardware decode off in the flags file the installer just wrote; Steam gets
+# its FEX launcher (through sudo, from the installer's terminal) and the
+# launcher's desktop entry. Other apps need nothing here.
+
+set -euo pipefail
+
+if (( $# != 1 )); then
+  echo "Usage: post-install <app>" >&2
+  exit 2
+fi
+if (( EUID == 0 )); then
+  echo "Error: post-install runs as the user, never as root" >&2
+  exit 1
+fi
+[[ -n ${HOME:-} ]] || HOME=$(getent passwd "$EUID" | cut -d: -f6)
+export HOME
+# Unprivileged tests stage the package under a fixture root.
+root=${OMARCHY_MAC_ROOT:-}
+case $1 in
+  chromium | chrome | edge | brave | brave-origin)
+    exec "$root/usr/bin/omarchy-mac-setup-user" ${root:+"$root"}
+    ;;
+  steam)
+    # Called directly, it re-checks the platform as the setup commands do.
+    if omarchy-hw-apple-silicon; then
+      sudo "$root/usr/lib/omarchy-mac/steam-launcher"
+      omarchy-launch-steam --prepare
+    fi
+    ;;
+esac

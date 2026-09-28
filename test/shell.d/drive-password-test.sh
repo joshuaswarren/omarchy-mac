@@ -692,8 +692,8 @@ said "The new password is the current one."
   fail "refused passwords change nothing"
 pass "drive password rejects empty, mismatched and unchanged passphrases before changing anything"
 
-# The recovery key stays: the system disk refuses it as the current password,
-# and a new password in its form.
+# A recovery key an earlier Mac setup added stays: the system disk refuses it
+# as the current password, and a new password in its form.
 use fake apple
 fixture "$formatted_recovery"
 if attempt 0 "$formatted_recovery" "$new_password" "$new_password"; then fail "the recovery key is refused as the current password"; fi
@@ -705,6 +705,18 @@ consistent "recovery key refused" "$old_password"
 attempt 0 "$old_password" "$new_password" "$new_password" || fail "the current password still changes the disk" "$(cat "$tmp/output")"
 consistent "after refusing the recovery key" "$new_password"
 pass "the system disk keeps its recovery key: refused as the current password, and its form as a new one"
+
+# A disk set up without a recovery key has one slot: a password in the
+# recovery key's form is only a password there.
+use fake apple
+fixture ""
+attempt 0 "$old_password" "$formatted_recovery" "$formatted_recovery" ||
+  fail "an owner-only disk takes a new password in the recovery key's form" "$(cat "$tmp/output")"
+consistent "owner-only disk, a password in the recovery key's form" "$formatted_recovery"
+attempt 0 "$formatted_recovery" "$new_password" "$new_password" ||
+  fail "an owner-only disk takes it as the current password" "$(cat "$tmp/output")"
+consistent "owner-only disk, changed from a password in the recovery key's form" "$new_password"
+pass "an owner-only disk refuses no password for the form of a recovery key it does not have"
 
 # A slot the boot package could not record keeps the journal: the rerun records it.
 use fake apple
