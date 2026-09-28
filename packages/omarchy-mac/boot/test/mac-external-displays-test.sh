@@ -165,8 +165,14 @@ grep -Fxq 'ExecStart=/usr/lib/omarchy/mac-boot/external-displays release' "$UNIT
 if command -v systemd-analyze >/dev/null; then
   mkdir -p "$tmp/units"
   cp "$UNIT" "$tmp/units/"
-  systemd-analyze verify --man=no "$tmp/units/omarchy-mac-external-displays.service" 2>"$tmp/verify" ||
-    ! grep -v -e 'not found' -e 'not executable' -e 'Cannot add dependency' "$tmp/verify" | grep -q . ||
-    fail "the unit verifies: $(cat "$tmp/verify")"
+  mkdir -p "$tmp/probe"
+  printf '[Unit]\nDefaultDependencies=no\n[Service]\nType=oneshot\nExecStart=%s\n' "$SCRIPT" >"$tmp/probe/probe.service"
+  if probe_out=$(systemd-analyze verify --man=no "$tmp/probe/probe.service" 2>&1) && [[ -z $probe_out ]]; then
+    systemd-analyze verify --man=no "$tmp/units/omarchy-mac-external-displays.service" 2>"$tmp/verify" ||
+      ! grep -v -e 'not found' -e 'not executable' -e 'Cannot add dependency' "$tmp/verify" | grep -q . ||
+      fail "the unit verifies: $(cat "$tmp/verify")"
+  else
+    echo 'ok - systemd-analyze cannot verify units here; unit verification not run'
+  fi
 fi
 pass "the udev rule and the desktop release are wired"
