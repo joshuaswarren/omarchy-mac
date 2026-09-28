@@ -300,15 +300,24 @@ provision_verify() {
 # luks-slots --owner: print the owner's slot encrypt.state records, once the
 # root's LUKS header proves it holds a key there. Read-only: a password change
 # asks before it changes anything, to refuse a password that opens another
-# slot, such as a recovery key an earlier Mac setup added.
+# slot, such as a recovery key an earlier Mac setup added. Exits 4 only when
+# nothing is recorded (no encrypt.state, or no owner_slot entry), and 1 for any
+# other refusal; the dispatcher's own failures use 2 and 3.
 print_owner_slot() {
   local owner device slots
 
   require_apple_silicon
   require_boot_partition
-  [[ -e $ENCRYPT_STATE ]] || refuse "No owner key slot is recorded: $ENCRYPT_STATE is missing."
+  if [[ ! -e $ENCRYPT_STATE ]]; then
+    printf '%s\n' "No owner key slot is recorded: $ENCRYPT_STATE is missing." >&2
+    exit 4
+  fi
+  [[ -f $ENCRYPT_STATE && -r $ENCRYPT_STATE ]] || refuse "Could not read $ENCRYPT_STATE."
+  if ! awk -F= '$1 == "owner_slot" { found = 1 } END { exit !found }' "$ENCRYPT_STATE"; then
+    printf '%s\n' "No owner key slot is recorded in $ENCRYPT_STATE." >&2
+    exit 4
+  fi
   owner=$(encrypt_state_get owner_slot || true)
-  [[ -n $owner ]] || refuse "No owner key slot is recorded in $ENCRYPT_STATE."
   [[ $owner =~ ^([0-9]|[12][0-9]|3[01])$ ]] ||
     refuse "$ENCRYPT_STATE records owner_slot=$owner, which is not a LUKS key slot number."
   device=$(luks_root_device) || refuse "Could not find the encrypted disk that /etc/crypttab names."

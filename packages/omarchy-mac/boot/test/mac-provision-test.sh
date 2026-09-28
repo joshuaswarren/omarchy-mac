@@ -455,9 +455,9 @@ owner_query() {
   [[ $after == "$before" ]] || fail "luks-slots --owner changes no file" "$(diff <(echo "$before") <(echo "$after"))"
 }
 owner_refused() {
-  local context=$1 says=$2
+  local context=$1 says=$2 status=${3:-1}
   owner_query
-  (( owner_status != 0 )) || fail "luks-slots --owner refuses $context"
+  (( owner_status == status )) || fail "luks-slots --owner refuses $context with exit $status, not $owner_status" "$(cat "$test_tmp/err")"
   [[ ! -s $test_tmp/out ]] || fail "$context: luks-slots --owner prints no slot" "$(cat "$test_tmp/out")"
   error_says "$says"
 }
@@ -475,8 +475,18 @@ sed -i 's/^owner_slot=.*/owner_slot=two/' "$root/boot/omarchy/encrypt.state"
 TEST_KEYSLOTS="2 3" owner_refused "a non-numeric owner slot" "records owner_slot=two, which is not a LUKS key slot number"
 sed -i 's/^owner_slot=.*/owner_slot=32/' "$root/boot/omarchy/encrypt.state"
 TEST_KEYSLOTS="2 3 32" owner_refused "an owner slot out of range" "records owner_slot=32"
+sed -i 's/^owner_slot=.*/owner_slot=/' "$root/boot/omarchy/encrypt.state"
+TEST_KEYSLOTS="2 3" owner_refused "an empty owner slot" "records owner_slot=, which is not a LUKS key slot number"
+sed -i 's/^owner_slot=.*/owner_slot=2/' "$root/boot/omarchy/encrypt.state"
+TEST_PLATFORM=generic-aarch64 TEST_KEYSLOTS="2 3" owner_refused "off Apple Silicon" "runs only on Apple Silicon"
+TEST_BOOT_UUID="" TEST_KEYSLOTS="2 3" owner_refused "an unmounted Boot partition" "Boot partition is not mounted at /boot"
+mv "$root/dev/disk/by-uuid/$luks_uuid" "$test_tmp/by-uuid"
+TEST_KEYSLOTS="2 3" owner_refused "a crypttab device that is not there" "Could not find the encrypted disk"
+mv "$test_tmp/by-uuid" "$root/dev/disk/by-uuid/$luks_uuid"
 sed -i '/^owner_slot=/d' "$root/boot/omarchy/encrypt.state"
-TEST_KEYSLOTS="2 3" owner_refused "no recorded owner slot" "No owner key slot is recorded in"
+TEST_KEYSLOTS="2 3" owner_refused "no recorded owner slot" "No owner key slot is recorded in" 4
+[[ $(head -c 30 "$test_tmp/err") == "No owner key slot is recorded "* ]] || fail "the no-record message leads stderr" "$(cat "$test_tmp/err")"
 rm "$root/boot/omarchy/encrypt.state"
-TEST_KEYSLOTS="2 3" owner_refused "a missing encrypt.state" "is missing"
-pass "luks-slots --owner prints the recorded owner slot the header holds, refuses a missing or invalid record, and changes nothing"
+TEST_KEYSLOTS="2 3" owner_refused "a missing encrypt.state" "No owner key slot is recorded: " 4
+[[ $(head -c 30 "$test_tmp/err") == "No owner key slot is recorded:"* ]] || fail "the missing-file message leads stderr" "$(cat "$test_tmp/err")"
+pass "luks-slots --owner prints the recorded owner slot the header holds, exits 4 only when nothing is recorded and 1 for every other refusal, and changes nothing"
