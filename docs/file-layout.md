@@ -282,9 +282,10 @@ transaction in the already-visible update terminal, then runs
 ## First-run (`omarchy-provision-first-run`)
 
 Runs once on first interactive login, after the user manager is live. It
-first runs `omarchy-provision-user || true` so finalize catches up if it
-never ran, then handles the steps that need a running graphical session
-and/or a working user systemd instance:
+first runs `omarchy-provision-user` so finalize catches up if it never ran (a
+failure is logged and keeps first-run pending, like any other step), then
+handles the steps that need a running graphical session and/or a working user
+systemd instance:
 
 - `omarchy-hook-install post-update` for the three shipped hooks
   (`install-voxtype.hook`, `setup-fingerprint.hook`, `setup-agent.hook`).
@@ -296,6 +297,9 @@ and/or a working user systemd instance:
   Done here, not at finalize, because
   the user manager isn't reachable from the ISO chroot; `ConditionPath*`
   in the unit files keeps services inert when they don't apply.
+- `omarchy-lifecycle-dispatch setup-user` — the platform's own user setup,
+  now with the session up (a no-op where the platform registers none; see
+  [lifecycle-dispatch.md](lifecycle-dispatch.md)).
 - `install/user/first-run/gnome-theme.sh`,
   `install/user/first-run/gtk-primary-paste.sh` — GNOME/GTK settings that
   need the dconf daemon.
@@ -340,7 +344,7 @@ The package lists the ISO pacstraps live at `install/omarchy-base.packages`
 and `install/omarchy-other.packages`; the ISO builder also reads them when
 constructing its offline mirror.
 
-A platform's default package set is the base list plus its architecture's and its platform's additions: `install/omarchy-aarch64.packages` on every aarch64 platform, then `install/omarchy-apple.packages` on Apple Silicon or `install/omarchy-qualcomm.packages` on Qualcomm. `omarchy-pkg-defaults [platform]` prints the composed set (for the running machine by default, via `omarchy-hw-platform`), and `omarchy-reinstall-pkgs` installs it. The pacman repositories follow the platform the same way: `default/pacman/` on x86_64, `default/pacman/aarch64/` on other aarch64 platforms, and `default/pacman/apple-silicon/`, the only one with the Asahi repository, on Apple Silicon.
+A platform's default package set is the base list plus its architecture's and its platform's additions: `install/omarchy-aarch64.packages` on every aarch64 platform, then `install/omarchy-apple-silicon.packages` on Apple Silicon or `install/omarchy-qualcomm.packages` on Qualcomm. The Apple list names only the Mac's two packages and the defaults an owner may remove: what every Mac needs comes as `omarchy-mac`'s and `omarchy-mac-boot`'s dependencies. `omarchy-pkg-defaults [platform]` prints the composed set (for the running machine by default, via `omarchy-hw-platform`), and `omarchy-reinstall-pkgs` installs it. The pacman repositories follow the platform the same way: `default/pacman/` on x86_64, `default/pacman/aarch64/` on other aarch64 platforms, and on Apple Silicon the `omarchy-mac` package's `/usr/share/omarchy-mac/pacman/`, the only one with the Asahi repository.
 
 `omarchy-settings` ships the same files on every architecture. The platform-specific ones (the mkinitcpio, Limine, zram and oomd drop-ins) decide at runtime whether they apply; `default/settings-runtime-profile` lists each one and tells the package recipe the source works this way.
 

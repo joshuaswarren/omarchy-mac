@@ -4,6 +4,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/base-test.sh"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 export OMARCHY_PATH="$ROOT"
+# Apple Silicon stages omarchy-mac's templates; here, the package's source.
+export OMARCHY_MAC_PACMAN_TEMPLATES="$ROOT/packages/omarchy-mac/share/omarchy-mac/pacman"
 source "$ROOT/install/helpers/pacman.sh"
 omarchy-hw-platform() { echo "${fixture_platform:-generic}"; }
 omarchy-hw-apple-silicon() { [[ ${fixture_platform:-generic} == "apple-silicon" ]]; }
@@ -70,9 +72,9 @@ pass 'offline finalization performs no sync or live configuration replacement'
 
 # The package-resolution fixtures resolve the same repositories, in the same
 # order, as each platform's edge template.
-for fixture in apple:apple-silicon qualcomm:aarch64 generic-aarch64:aarch64; do
+for fixture in "apple:$OMARCHY_MAC_PACMAN_TEMPLATES" "qualcomm:$ROOT/default/pacman/aarch64" "generic-aarch64:$ROOT/default/pacman/aarch64"; do
   [[ $(repositories "$ROOT/tools/package-resolution/platforms/${fixture%%:*}/pacman.conf") == \
-    "$(repositories "$ROOT/default/pacman/${fixture#*:}/pacman-edge.conf")" ]] ||
-    fail "the ${fixture%%:*} resolution fixture follows default/pacman/${fixture#*:}"
+    "$(repositories "${fixture#*:}/pacman-edge.conf")" ]] ||
+    fail "the ${fixture%%:*} resolution fixture follows ${fixture#*:}"
 done
 pass "package-resolution fixtures follow each platform's repositories"

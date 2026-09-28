@@ -47,7 +47,7 @@ for platform in apple-silicon qualcomm generic-aarch64 generic; do
   if [[ $platform == "apple-silicon" ]]; then
     while IFS= read -r package; do
       grep -Fxq "$package" "$work/$platform.packages" || fail "Apple Silicon: $package"
-    done < <(names "$ROOT/install/omarchy-apple.packages")
+    done < <(names "$ROOT/install/omarchy-apple-silicon.packages")
   else
     ! grep -Eq "$apple_only" "$work/$platform.packages" ||
       fail "$platform: no Apple Silicon package" "$(grep -E "$apple_only" "$work/$platform.packages")"
@@ -60,6 +60,14 @@ for platform in apple-silicon qualcomm generic-aarch64 generic; do
   fi
 done
 pass "each platform composes base, architecture and platform lists, and only Apple Silicon names Apple packages"
+
+# The Apple list goes by its platform's name, as upstream names it; its older
+# name is gone.
+[[ -f $ROOT/install/omarchy-apple-silicon.packages && ! -L $ROOT/install/omarchy-apple-silicon.packages ]] ||
+  fail "the Apple list is install/omarchy-apple-silicon.packages"
+[[ ! -e $ROOT/install/omarchy-apple.packages && ! -L $ROOT/install/omarchy-apple.packages ]] ||
+  fail "install/omarchy-apple.packages is gone"
+pass "the Apple list is omarchy-apple-silicon.packages, without its older name"
 
 ! omarchy-pkg-defaults riscv 2>/dev/null || fail "an unknown platform is refused"
 pass "an unknown platform is refused"

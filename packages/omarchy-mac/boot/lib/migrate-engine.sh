@@ -37,6 +37,7 @@ interrupted_marker=$state/transaction-interrupted
 set_copy=$state/set
 complete=$state/complete
 reboot_pending=$state/reboot-pending
+user_pending=$state/user-pending
 lock_file=$R/run/lock/omarchy-mac-migrate.lock
 pacman_conf=$R/etc/pacman.conf
 pacman_db=$R/var/lib/pacman
@@ -1287,46 +1288,305 @@ install_defaults() {
 # Apple Silicon Wi-Fi; systemd-oomd, which stays off on Macs; and the platform
 # migration, which handed the Mac to this engine. Every other official
 # migration still pending runs on the next omarchy update, as on any install
-# that upgraded. An adapter adds what its cohort already applied.
+# that upgraded. An adapter adds what its cohort already applied, and each
+# repair below adds the Mac migration whose work it did.
 settled_migrations="1784476564 1784917531 1785273276 1785424256 1785944594 1786137597 1786391100 1786482992 1786605598 1789325478 1789444024 1790347292"
 platform_migration=1790347292
+repaired=$state/repaired
+repaired_migrations=()
 
-# Records the settled migrations for USER, as the user, where they are not
-# recorded yet.
+# The migrations USER records as done: the common ones, the repairs this
+# migration made and the cohort's, comma-separated.
+settled_for() {
+  local dir=$R$2/.local/state/omarchy/migrations
+  { printf '%s\n' $settled_migrations; cat "$repaired" 2>/dev/null; adapter_hook settled "$dir"; } | awk 'NF' | paste -sd,
+}
+
+# Records the migrations NAMES lists (comma-separated) as done for USER, as
+# the user, where they are not recorded yet.
 settle_migrations() {
-  local user=$1 home=$2 dir=$R$2/.local/state/omarchy/migrations name
+  local user=$1 home=$2 names=$3 dir=$R$2/.local/state/omarchy/migrations name
   as_user "$user" "$R$home" mkdir -p "$dir" || return 1
-  for name in $settled_migrations $(adapter_hook settled "$dir"); do
+  for name in ${names//,/ }; do
     [[ -e $dir/$name.sh ]] || as_user "$user" "$R$home" touch "$dir/$name.sh" || return 1
   done
 }
 
+# --- Repairs a fresh image does not need ----------------------------------------
+#
+# Macs set up before the runtime or its images carried a fix got it from a
+# migration of the runtime they ran. Upstream Omarchy carries none of those
+# migrations, so the engine does their work here, as root, for every cohort.
+# Each repair can run again from its start and fails the step when it cannot
+# finish; a later run repeats it. One that did its work, or found none to do,
+# records its migration as done for every user. The target's runtime carries
+# the leaves they run (install/config/snapper.sh and locale.sh) and its
+# omarchy-mac the keyboard handover; a target
+# without one is reported, and that migration is left to the runtime.
+
+runtime_leaf_present() {
+  [[ -f $R/usr/share/omarchy/$1 ]]
+}
+
+# A runtime leaf, run whole in a strict shell as the runtime's migrations run them.
+run_runtime_leaf() {
+  local leaf=$R/usr/share/omarchy/$1
+  shift
+  env OMARCHY_PATH="$R/usr/share/omarchy" "$@" bash -euo pipefail "$leaf"
+}
+
+# Snapper's root configuration (migration 1789148088): the asahi-overlay
+# install skipped it. The leaf skips a root that is not btrfs; 3 means it
+# found a layout it will not touch, left for manual repair, which is final.
+repair_snapper() {
+  local status=0
+  if ! runtime_leaf_present install/config/snapper.sh; then
+    say "This Omarchy has no Snapper setup leaf: the root's Snapper configuration was not checked"
+    return 0
+  fi
+  run_runtime_leaf install/config/snapper.sh >/dev/null || status=$?
+  case $status in
+    0) repaired_migrations+=(1789148088) ;;
+    3)
+      say "The existing Snapper configuration was left for manual repair"
+      repaired_migrations+=(1789148088)
+      ;;
+    *) die "cannot set up Snapper for the root filesystem" ;;
+  esac
+}
+
+# Asahi ALARM's bootstrap administrator (migration 1789158179): polkit asks
+# for alarm's password while it stays in wheel. It leaves wheel only when
+# another existing account is in wheel. Where alarm is itself an Omarchy user,
+# the engine leaves the decision to that migration, which skips only alarm's
+# own run.
+repair_bootstrap_admin() {
+  local members member others=0
+  members=$(awk -F: '$1 == "wheel" { print $4 }' "$R/etc/group" 2>/dev/null) || members=""
+  if omarchy_users | awk '{ print $1 }' | grep -Fxq alarm; then
+    say "alarm uses Omarchy here: its wheel membership is left to the runtime's migration"
+  else
+    if [[ ,$members, == *,alarm,* ]]; then
+      IFS=, read -ra members <<<"$members"
+      for member in "${members[@]}"; do
+        if [[ -n $member && $member != "alarm" ]] && awk -F: -v user="$member" '$1 == user { found = 1 } END { exit !found }' "$R/etc/passwd"; then
+          others=1
+        fi
+      done
+      if (( others )); then
+        say "Removing Asahi's bootstrap account alarm from wheel"
+        gpasswd -d alarm wheel >/dev/null || die "cannot remove alarm from wheel"
+      fi
+    fi
+    repaired_migrations+=(1789158179)
+  fi
+}
+
+# The Intel Mac Broadcom quirk (migration 1789172112): an older runtime wrote
+# it on Apple Silicon too, where it breaks the WPA handshake. Only the exact
+# block it wrote goes, and what the file held before it stays. The migration
+# also required the Wi-Fi chip's PCI ID; on Apple Silicon the block does harm
+# whichever chip carries it, so the engine does not. The rebuild it owes is
+# recorded first, under the migration's own marker, so an interrupted run of
+# either finishes it.
+repair_broadcom_block() {
+  local conf=$R/etc/modprobe.d/brcmfmac.conf pending=$R/var/lib/omarchy/migrations/1789172112-initramfs-pending
+  local block content rest file
+  block="# Broadcom's firmware supplicant and authenticator fail the WPA four-way
+# handshake on Apple hardware, which surfaces as a rejected password. Disable
+# both so wpa_supplicant performs the handshake instead.
+options brcmfmac feature_disable=0x82000"
+  if [[ -f $conf ]]; then
+    content=$(<"$conf")
+    if [[ $content == "$block" || $content == *$'\n'"$block" ]]; then
+      say "Removing the Intel Mac Broadcom quirk from $conf"
+      install -D -m 644 /dev/null "$pending" && sync "$pending" "$(dirname "$pending")" ||
+        die "cannot record the initramfs rebuild the Broadcom repair needs"
+      interrupt_for_test mid broadcom
+      rest=${content%"$block"}
+      rest=${rest%$'\n'}
+      if [[ -z $rest && ! -L $conf ]]; then
+        rm -f -- "$conf" && sync "$(dirname "$conf")"
+      else
+        # A link keeps pointing where it did: its target is rewritten.
+        file=$(readlink -f -- "$conf") || die "cannot resolve $conf"
+        if [[ -n $rest ]]; then
+          printf '%s\n' "$rest"
+        fi | durable_write "$file"
+      fi || die "cannot remove the Broadcom quirk from $conf"
+    fi
+  fi
+  interrupt_for_test mid broadcom-rebuild
+  if [[ -f $pending ]]; then
+    omarchy-mac-boot-update >/dev/null || die "cannot rebuild the boot image without the Broadcom quirk"
+    rm -f "$pending"
+  fi
+  repaired_migrations+=(1789172112)
+}
+
+# A UTF-8 locale (migration 1789146110): Asahi ALARM ships LANG=C. The leaf
+# changes only an unset LANG, C or POSIX.
+repair_locale() {
+  if ! runtime_leaf_present install/config/locale.sh; then
+    say "This Omarchy has no locale setup leaf: the locale was not checked"
+    return 0
+  fi
+  run_runtime_leaf install/config/locale.sh OMARCHY_LOCALE_CONF="$R/etc/locale.conf" OMARCHY_LOCALE_GEN="$R/etc/locale.gen" >/dev/null ||
+    die "cannot set up the UTF-8 locale"
+  repaired_migrations+=(1789146110)
+}
+
+# The keyboard's function-key mode (migration 1790327324), handed to
+# omarchy-mac. The line Omarchy generated here depends on the fork the Mac
+# came from: fnmode=2 from the install leaf, replaced once by mx-mac
+# (1790305681, fnmode=3) or quattro-upstream (1789132067, fnmode=1), as any
+# of its users' migration records say, mx-mac first as in that migration.
+# omarchy-mac-setup-keyboard decides once, and a fork rebuild still owed
+# overrides this.
+repair_keyboard_mode() {
+  local generated=2 user home dir
+  if ! command -v omarchy-mac-setup-keyboard >/dev/null; then
+    say "This omarchy-mac has no omarchy-mac-setup-keyboard: the keyboard mode was not handed over"
+    return 0
+  fi
+  while read -r user home; do
+    [[ -n $user ]] || continue
+    dir=$R$home/.local/state/omarchy/migrations
+    if [[ -f $dir/1790305681.sh ]]; then
+      generated=3
+    elif [[ -f $dir/1789132067.sh && $generated == 2 ]]; then
+      generated=1
+    fi
+  done < <(omarchy_users)
+  env OMARCHY_MAC_FIXTURE_ROOT="$R" omarchy-mac-setup-keyboard "$generated" >/dev/null ||
+    die "cannot hand the keyboard's function-key mode to omarchy-mac"
+  repaired_migrations+=(1790327324)
+}
+
+repair_system() {
+  local output
+  repaired_migrations=()
+  repair_snapper
+  repair_bootstrap_admin
+  repair_broadcom_block
+  repair_locale
+  repair_keyboard_mode
+  # The Broadcom and keyboard repairs can rebuild the UKI.
+  output=$(boot_check_pending linux-aurora 2>&1) || die "the boot files do not check after the repairs: $(tail -n 1 <<<"$output")"
+  printf '%s\n' "${repaired_migrations[@]}" | durable_write "$repaired" || die "cannot record the repairs made"
+}
+
+# --- User setup ------------------------------------------------------------------
+#
+# Each Omarchy user gets the settled migrations, the units first run enables
+# and the Mac user setup. What fails for one user (a broken home, a setup that
+# exits nonzero) never stops the migration: it is kept in user-pending, a
+# "user item" line each, and runs again at every later run and boot until it
+# succeeds. The post-reboot unit stays enabled for that.
+
+# One item of a user's setup: settle:NAMES, a unit first run enables, or
+# setup-user. A pending settle keeps the names it was given, so a retry after
+# the plan moved on records the same ones.
+apply_user_item() {
+  local user=$1 home=$2 item=$3
+  case $item in
+    settle:*) settle_migrations "$user" "$home" "${item#settle:}" ;;
+    setup-user) as_user "$user" "$R$home" omarchy-mac-setup-user >/dev/null ;;
+    *) enable_user_unit "$user" "$home" "$item" ;;
+  esac
+}
+
+# The user's setup; prints what failed, one item a line.
+setup_user() {
+  local user=$1 home=$2 item items=("settle:$(settled_for "$user" "$home")")
+  if [[ -f $plan/user-units ]]; then
+    for item in $fresh_user_units; do
+      grep -Fxq "$item" "$plan/user-units" || items+=("$item")
+    done
+  fi
+  for item in "${items[@]}" setup-user; do
+    apply_user_item "$user" "$home" "$item" || printf '%s\n' "$item"
+  done
+}
+
+# Replaces the pending record with FILE's lines, or removes it when FILE is empty.
+record_user_pending() {
+  if [[ -s $1 ]]; then
+    LC_ALL=C sort -u "$1" | durable_write "$user_pending" || die "cannot record the pending user setup"
+  else
+    rm -f "$user_pending"
+  fi
+}
+
+# "user item; ..." for messages, a settle item without its names.
+pending_summary() {
+  awk '{ item = $2; sub(/:.*/, "", item); print $1 " " item }' "$user_pending" | paste -sd';' | sed 's/;/; /g'
+}
+
+# Runs the pending items again, only those, so nothing a user turned off since
+# comes back. An account that is gone or no longer uses Omarchy is dropped.
+# Fails while any item is still pending.
+retry_user_pending() {
+  local user home item left
+  [[ -s $user_pending ]] || return 0
+  rm -f "$state"/user-pending.??????
+  left=$(mktemp "$state/user-pending.XXXXXX") || die "cannot record the pending user setup"
+  while read -r user item; do
+    home=$(omarchy_users | awk -v user="$user" '$1 == user { print $2; exit }')
+    [[ -n $home && -n $item ]] || continue
+    apply_user_item "$user" "$home" "$item" </dev/null || printf '%s %s\n' "$user" "$item" >>"$left"
+  done <"$user_pending"
+  record_user_pending "$left"
+  rm -f "$left"
+  if [[ -s $user_pending ]]; then
+    say "User setup still pending, retried at the next run or boot: $(pending_summary)"
+    return 1
+  fi
+  say "The pending user setup is done"
+}
+
+# Outside a completed migration's cleanup: pending user setup runs again, and
+# once none is left the post-reboot unit is released unless a migration is
+# waiting for its reboot.
+retry_user_pending_now() {
+  [[ -s $user_pending ]] || return 0
+  if retry_user_pending && [[ ! -e $reboot_pending ]]; then
+    systemctl disable "$verify_unit" >/dev/null 2>&1 || say "Could not disable $verify_unit; it does nothing from now on."
+  fi
+}
+
 # A migrated Mac ends as a fresh install does: with its default packages, the
-# Mac services the image's hardware setup enables and, for every Omarchy user,
-# the migrations a fresh image records as done, the units first run enables and
-# the Mac user setup. A unit the Mac already had before the migration is taken
-# to be off by choice and stays off; a plan frozen before that was recorded
-# enables none. The reboot that follows brings up what probes only at boot,
-# such as the video decoder.
+# Mac services the image's hardware setup enables, the repairs above and, for
+# every Omarchy user, the migrations a fresh image records as done, the units
+# first run enables and the Mac user setup. A unit the Mac already had before
+# the migration is taken to be off by choice and stays off; a plan frozen
+# before that was recorded enables none. The reboot that follows brings up
+# what probes only at boot, such as the video decoder.
 step_defaults() {
-  local user home unit
+  local user home item pending
   install_defaults
   interrupt_for_test mid defaults
   omarchy-mac-setup-system >/dev/null || die "omarchy-mac-setup-system could not set up the Mac's services"
   [[ -e $R/var/lib/omarchy/migrations/$platform_migration ]] ||
     install -D -m 644 /dev/null "$R/var/lib/omarchy/migrations/$platform_migration" ||
     die "cannot record the platform migration as done"
+  repair_system
+  interrupt_for_test mid user-setup
+  # What an earlier migration left pending stays pending until it succeeds.
+  retry_user_pending || :
+  rm -f "$state"/user-pending.??????
+  pending=$(mktemp "$state/user-pending.XXXXXX") || die "cannot record the pending user setup"
+  [[ ! -f $user_pending ]] || cat "$user_pending" >"$pending"
   while read -r user home; do
     [[ -n $user ]] || continue
-    settle_migrations "$user" "$home" || die "cannot record the settled migrations for $user"
-    if [[ -f $plan/user-units ]]; then
-      for unit in $fresh_user_units; do
-        grep -Fxq "$unit" "$plan/user-units" && continue
-        enable_user_unit "$user" "$home" "$unit" || say "Could not enable $unit for $user"
-      done
-    fi
-    as_user "$user" "$R$home" omarchy-mac-setup-user >/dev/null || say "Could not apply the Mac user setup for $user"
+    while read -r item; do
+      [[ -n $item ]] || continue
+      say "Could not apply $item for $user; it runs again after the reboot"
+      printf '%s %s\n' "$user" "$item" >>"$pending"
+    done < <(setup_user "$user" "$home" </dev/null)
   done < <(omarchy_users)
+  record_user_pending "$pending"
+  rm -f "$pending"
 }
 
 # Waits for a reboot; after it, the new chain must have booted Aurora through
@@ -1364,9 +1624,25 @@ step_retire() {
   tidy_completed
 }
 
+# The post-reboot unit is released once the working state is gone and no user
+# setup is pending; while some is, it stays enabled to retry at every boot.
 tidy_completed() {
+  local working=0 release=0
   if [[ -e $reboot_pending || -d $cache || -d $set_copy ]]; then
+    working=1
+    release=1
+  fi
+  if [[ -s $user_pending ]]; then
+    if retry_user_pending; then
+      release=1
+    else
+      release=0
+    fi
+  fi
+  if (( release )); then
     systemctl disable "$verify_unit" >/dev/null 2>&1 || say "Could not disable $verify_unit; it does nothing from now on."
+  fi
+  if (( working )); then
     rm -rf "$cache" "$set_copy" "$state/installed.now" "$state/overwrite"
     rm -f "$reboot_pending"
   fi
@@ -1394,7 +1670,7 @@ resume_steps() {
 }
 
 migrate_run() {
-  local target_arg="" candidate
+  local target_arg="" candidate retried=0
   while (( $# )); do
     case $1 in
       --target) target_arg=${2:?--target needs a file}; shift 2 ;;
@@ -1412,6 +1688,7 @@ migrate_run() {
 
   if [[ -f $complete && -f $plan/target-id ]]; then
     tidy_completed
+    retried=1
     candidate=$(find_target "$target_arg")
     if [[ -z $candidate ]]; then
       say "Already migrated to $(<"$plan/target-id")."
@@ -1425,6 +1702,9 @@ migrate_run() {
     archive_state
   fi
 
+  # User setup an earlier migration left pending runs first, whatever this
+  # run does next.
+  (( retried )) || retry_user_pending_now
   if [[ -f $journal && $(step_state preflight) == "done" ]]; then
     if [[ -n $target_arg ]] && ! cmp -s "$target_arg" "$plan/target"; then
       die "a migration to $(<"$plan/target-id") is in progress; finish it before choosing another target"
@@ -1450,6 +1730,7 @@ archive_state() {
   destination=$state/history/$(date +%s)
   install -d -m 700 "$destination"
   mv "$journal" "$plan" "$start" "$expected" "$complete" "$destination/" 2>/dev/null
+  [[ ! -f $repaired ]] || mv "$repaired" "$destination/"
   [[ ! -d $backup ]] || mv "$backup" "$destination/"
 }
 
@@ -1457,19 +1738,25 @@ archive_state() {
 # is waiting for, or past, its reboot, and does nothing otherwise.
 migrate_verify() {
   platform=$(hardware_platform) || die "cannot determine the hardware platform"
-  [[ $platform == "apple-silicon" && -f $journal && -n $(step_state reboot) ]] || return 0
+  [[ $platform == "apple-silicon" ]] || return 0
+  [[ -f $journal && -n $(step_state reboot) ]] || [[ -s $user_pending ]] || return 0
   take_lock
   trap on_exit EXIT
   if [[ -f $complete ]]; then
     tidy_completed
     return 0
   fi
+  retry_user_pending_now
+  [[ -f $journal && -n $(step_state reboot) ]] || return 0
   load_plan
   resume_steps
 }
 
 migrate_status() {
   local step event
+  if [[ -s $user_pending ]]; then
+    say "User setup pending, retried at the next run or boot: $(pending_summary)"
+  fi
   if [[ ! -f $journal || $(step_state preflight) != "done" ]]; then
     say "No migration has started on this Mac."
     return 0

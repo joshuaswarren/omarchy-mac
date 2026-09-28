@@ -1,0 +1,30 @@
+#!/bin/bash -p
+
+# omarchy-lifecycle-dispatch pre-remove <app>, run as the user before a
+# remover takes <app>'s packages away: it undoes what post-install <app>
+# added. For Steam that is the FEX launcher, which depends on Steam, and the
+# desktop entry the launcher wrote for the user (one the user changed to run
+# something else stays), and the x86 Steam client FEX ran, which the remover's
+# own Steam cleanup does not know. Nothing to undo is a success.
+
+set -euo pipefail
+
+if (( $# != 1 )); then
+  echo "Usage: pre-remove <app>" >&2
+  exit 2
+fi
+if (( EUID == 0 )); then
+  echo "Error: pre-remove runs as the user, never as root" >&2
+  exit 1
+fi
+[[ -n ${HOME:-} ]] || HOME=$(getent passwd "$EUID" | cut -d: -f6)
+export HOME
+# Called directly, it re-checks the platform as the setup commands do.
+if [[ $1 == "steam" ]] && omarchy-hw-apple-silicon; then
+  omarchy-pkg-drop omarchy-steam-fex
+  desktop=$HOME/.local/share/applications/steam.desktop
+  if [[ -f $desktop && ! -L $desktop ]] && grep -q 'omarchy-launch-steam' "$desktop"; then
+    rm -f -- "$desktop"
+  fi
+  rm -rf -- "$HOME/.local/share/fex-steam"
+fi

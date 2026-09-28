@@ -20,11 +20,24 @@ Panel {
   readonly property var mediaService: bar?.shell?.firstPartyServiceFor("omarchy.media")
   readonly property var activeMediaPlayer: mediaService ? mediaService.activePlayer : null
 
+  // Apple Silicon hosts run asahi-audio's DSP graphs and the omarchy-mac
+  // microphone mapper; their internal nodes are hidden only there.
+  readonly property bool appleHost: !!bar && bar.appleSiliconHost === true
+
+  readonly property bool asahiMicMapped: {
+    if (!appleHost) return false
+    for (var i = 0; i < nodes.length; i++)
+      if (nodes[i] && Model.isAsahiMicMapping(nodes[i].name)) return true
+    return false
+  }
+
   readonly property var candidateSinks: {
     var list = []
     for (var i = 0; i < nodes.length; i++) {
       var n = nodes[i]
-      if (n && n.isSink && !n.isStream) list.push(n)
+      if (!n || !n.isSink || n.isStream) continue
+      if (appleHost && Model.isAsahiRawDevice(n.name)) continue
+      list.push(n)
     }
     return list
   }
@@ -33,9 +46,14 @@ Panel {
     var list = []
     for (var i = 0; i < nodes.length; i++) {
       var n = nodes[i]
-      if (n && !n.isSink && !n.isStream && isAudioSource(n)) {
+      // The mapper's virtual source has no Quickshell type, so it is named.
+      var mapped = appleHost && Model.isAsahiMicMapping(n ? n.name : "")
+      if (n && !n.isSink && !n.isStream && (isAudioSource(n) || mapped)) {
         var name = n.name || ""
         if (name === "quickshell") continue
+        if (appleHost && Model.asahiSourceHidden(name, asahiMicMapped)) continue
+        // A Mac's headset jack input stays listed with nothing plugged in.
+        if (appleHost && sourceAvailability[name] === false) continue
         list.push(n)
       }
     }
@@ -50,12 +68,14 @@ Panel {
       // A tuning's output is a playback stream too, but it is the processing
       // itself rather than an application, so it does not belong in the list.
       if (String(n.name || "").indexOf("omarchy_speaker_tuning") === 0) continue
+      if (appleHost && Model.isAsahiInternalStream(n.name)) continue
       list.push(n)
     }
     return list
   }
 
   property var sinkAvailability: ({})
+  property var sourceAvailability: ({})
   property bool sinkAvailabilityLoaded: false
 
   // Identify true playback streams without reading node.properties here:
@@ -145,8 +165,19 @@ Panel {
 
   readonly property real outputVolume: volumeSink && volumeSink.audio ? volumeSink.audio.volume : 0
   readonly property bool outputMuted: volumeSink && volumeSink.audio ? volumeSink.audio.muted : false
-  readonly property real inputVolume: source && source.audio ? source.audio.volume : 0
-  readonly property bool inputMuted: source && source.audio ? source.audio.muted : false
+  // The Apple microphone mapping is a virtual source without PwNode.audio, so
+  // its volume and mute go through wpctl.
+  readonly property bool inputViaWpctl: appleHost && !!source && !source.audio && Model.isAsahiMicMapping(source.name)
+  readonly property bool inputLevelKnown: !inputViaWpctl || mappedInput.known
+  readonly property real inputVolume: inputViaWpctl ? mappedInput.volume : (source && source.audio ? source.audio.volume : 0)
+  readonly property bool inputMuted: inputViaWpctl ? mappedInput.muted : (source && source.audio ? source.audio.muted : false)
+  // Quickshell cannot meter this source (it is untyped, and its peak stream on
+  // the mono DSP source negotiates stereo and drops every buffer), so the
+  // omarchy-mac helper records the mapping and prints its level.
+  readonly property var inputPeakNode: inputViaWpctl ? null : source
+  property real mappedInputPeak: 0
+  readonly property bool mappedInputMetered: opened && inputViaWpctl
+  onMappedInputMeteredChanged: mappedInputLevel.running = mappedInputMetered
 
   onRawAudioSinksChanged: if (rawAudioSinks.length > 0) cachedAudioSinks = rawAudioSinks
   onRawAudioSourcesChanged: if (rawAudioSources.length > 0) cachedAudioSources = rawAudioSources
@@ -172,7 +203,7 @@ Panel {
   // would otherwise report "input unmuted" forever, leaving the hero switch
   // able to mute but never to unmute.
   readonly property bool hasOutput: !!(volumeSink && volumeSink.audio)
-  readonly property bool hasInput: !!(source && source.audio)
+  readonly property bool hasInput: !!(source && source.audio) || (inputViaWpctl && mappedInput.known)
   readonly property bool anyAudible: (hasOutput && !outputMuted) || (hasInput && !inputMuted)
   readonly property string toggleHint: anyAudible ? "Mute" : "Unmute"
 
@@ -412,7 +443,7 @@ Panel {
   }
 
   function inputIcon() {
-    if (!source || !source.audio) return "󰍭"
+    if (!hasInput) return "󰍭"
     return inputMuted ? "󰍭" : "󰍬"
   }
 
@@ -439,6 +470,10 @@ Panel {
   }
 
   function setInputVolume(v) {
+    if (inputViaWpctl) {
+      mappedInput.setVolume(v)
+      return
+    }
     if (!source || !source.audio) return
     source.audio.volume = Math.max(0, Math.min(1, v))
   }
@@ -448,7 +483,10 @@ Panel {
   }
 
   function toggleInputMute() {
-    if (source && source.audio) source.audio.muted = !source.audio.muted
+    if (inputViaWpctl) {
+      if (mappedInput.known) mappedInput.setMuted(!mappedInput.muted)
+    }
+    else if (source && source.audio) source.audio.muted = !source.audio.muted
   }
 
   // The hero switch is the whole panel's on/off, so it carries both channels
@@ -457,7 +495,8 @@ Panel {
   function toggleAllMuted() {
     var mute = anyAudible
     if (hasOutput) volumeSink.audio.muted = mute
-    if (hasInput) source.audio.muted = mute
+    if (hasInput && inputViaWpctl) mappedInput.setMuted(mute)
+    else if (hasInput) source.audio.muted = mute
   }
 
   function setDefaultSink(node) {
@@ -474,7 +513,9 @@ Panel {
 
   function setDefaultSource(node) {
     if (!node) return
-    Pipewire.preferredDefaultAudioSource = node
+    // Quickshell refuses an untyped node; the command below still selects it.
+    if (!(appleHost && !node.audio && Model.isAsahiMicMapping(node.name)))
+      Pipewire.preferredDefaultAudioSource = node
     if (node.id !== undefined && node.name) {
       Quickshell.execDetached([
         "omarchy-audio-input-set-default",
@@ -579,8 +620,31 @@ Panel {
 
   PwNodePeakMonitor {
     id: inputPeakMonitor
-    node: root.source
-    enabled: root.opened && !!root.source
+    node: root.inputPeakNode
+    enabled: root.opened && !!root.inputPeakNode
+  }
+
+  // Tied to the shell's life, and started again if audio restarts under it.
+  Process {
+    id: mappedInputLevel
+    command: ["setpriv", "--pdeathsig", "TERM", "omarchy-audio-asahi-mic-level"]
+    stdout: SplitParser {
+      onRead: function(line) { root.mappedInputPeak = Math.max(0, Math.min(1, parseFloat(line) || 0)) }
+    }
+    onRunningChanged: if (!running) root.mappedInputPeak = 0
+    onExited: if (root.mappedInputMetered) mappedInputLevelRetry.restart()
+  }
+
+  Timer {
+    id: mappedInputLevelRetry
+    interval: 2000
+    onTriggered: if (root.mappedInputMetered && !mappedInputLevel.running) mappedInputLevel.running = true
+  }
+
+  WpctlNodeLevel {
+    id: mappedInput
+    nodeId: root.inputViaWpctl ? root.source.id : -1
+    active: root.inputViaWpctl
   }
 
   Process {
@@ -589,6 +653,15 @@ Panel {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.updateSinkAvailability(text)
+    }
+  }
+
+  Process {
+    id: sourceAvailabilityProc
+    command: ["omarchy-audio-sink-availability", "sources"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.sourceAvailability = Model.parseSinkAvailability(text)
     }
   }
 
@@ -606,7 +679,10 @@ Panel {
     running: root.opened
     repeat: true
     triggeredOnStart: true
-    onTriggered: if (!sinkAvailabilityProc.running) sinkAvailabilityProc.running = true
+    onTriggered: {
+      if (!sinkAvailabilityProc.running) sinkAvailabilityProc.running = true
+      if (root.appleHost && !sourceAvailabilityProc.running) sourceAvailabilityProc.running = true
+    }
   }
 
   // Runs whether or not the panel is open: the bar shows and scrolls the output
@@ -890,7 +966,7 @@ Panel {
               Text {
                 id: microphonePercent
                 textFormat: Text.PlainText
-                text: Math.round((inputSlider.dragging ? inputSlider.liveValue : root.inputVolume) * 100) + "%"
+                text: root.inputLevelKnown ? Math.round((inputSlider.dragging ? inputSlider.liveValue : root.inputVolume) * 100) + "%" : "–"
                 color: Qt.darker(root.bar.foreground, 1.4)
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.caption
@@ -942,7 +1018,7 @@ Panel {
 
                   Rectangle {
                     height: parent.height
-                    width: parent.width * Math.max(0, Math.min(1, inputPeakMonitor.peak))
+                    width: parent.width * Math.max(0, Math.min(1, root.inputViaWpctl ? (root.inputMuted ? 0 : root.mappedInputPeak) : inputPeakMonitor.peak))
                     color: root.bar.foreground
                     Behavior on width { NumberAnimation { duration: 70 } }
                   }

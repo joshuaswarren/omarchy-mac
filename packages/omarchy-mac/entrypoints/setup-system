@@ -1,0 +1,21 @@
+#!/bin/bash -p
+
+# omarchy-lifecycle-dispatch setup-system [image-first-boot]. The last hardware
+# leaf runs this on every install and hardware rerun, and an image's first
+# boot runs it with image-first-boot, where omarchy-mac-setup-system uses no
+# network (it rebuilds no boot file either way). It re-checks the platform.
+
+set -euo pipefail
+
+if (( $# > 1 )) || { (( $# == 1 )) && [[ $1 != "image-first-boot" ]]; }; then
+  echo "Usage: setup-system [image-first-boot]" >&2
+  exit 2
+fi
+if (( EUID == 0 )); then
+  # Root takes nothing from its caller's environment.
+  exec /usr/bin/env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/bin OMARCHY_MAC_SETUP_OFFLINE="${1:+1}" /usr/bin/omarchy-mac-setup-system
+else
+  # Unprivileged tests stage the package under a fixture root.
+  root=${OMARCHY_MAC_ROOT:-}
+  OMARCHY_MAC_SETUP_OFFLINE="${1:+1}" exec "$root/usr/bin/omarchy-mac-setup-system" ${root:+"$root"}
+fi

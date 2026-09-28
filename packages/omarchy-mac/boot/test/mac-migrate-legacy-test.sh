@@ -146,6 +146,8 @@ FORK
   ships omarchy /usr/share/omarchy/bin/omarchy-update /usr/share/omarchy/default/bash/env-bootstrap /usr/bin/omarchy-update
   ships omarchy-settings /etc/sddm.conf.d/10-theme.conf /etc/profile.d/omarchy.sh /usr/share/uwsm/env.d/10-omarchy
   echo /etc/sddm.conf.d/10-theme.conf >"$F/backups"
+  # The legacy detector alias belongs to omarchy-mac.
+  ships omarchy-mac /usr/bin/omarchy-hw-apple
   ships omarchy-keyring /usr/share/pacman/keyrings/omarchy.gpg /usr/share/pacman/keyrings/omarchy-trusted
   ships ttf-jetbrains-mono-nerd-basic /usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf
   owns omarchy-mac-keyring /usr/share/pacman/keyrings/omarchy-mac.gpg /usr/share/pacman/keyrings/omarchy-mac-revoked
@@ -339,7 +341,9 @@ voxtype 1.0-1'
 [[ -d $R/usr/share/omarchy && ! -L $R/usr/share/omarchy ]] || fail "/usr/share/omarchy is the package's, not a link to the checkout"
 [[ ! -L $R/usr/bin/omarchy-update ]] && grep -qx "omarchy /usr/bin/omarchy-update" "$R/var/lib/pacman/local/files" ||
   fail "the commands are the package's"
-[[ ! -e $R/usr/bin/omarchy-upgrade-to-quattro-mac && ! -e $R/usr/bin/omarchy-hw-apple ]] || fail "links to checkout commands no package ships are gone"
+[[ ! -e $R/usr/bin/omarchy-upgrade-to-quattro-mac ]] || fail "links to checkout commands no package ships are gone"
+[[ ! -L $R/usr/bin/omarchy-hw-apple ]] && grep -qx "omarchy-mac /usr/bin/omarchy-hw-apple" "$R/var/lib/pacman/local/files" ||
+  fail "the legacy detector alias is omarchy-mac's, not a link to the checkout"
 [[ $(<"$R/etc/omarchy.conf") == 'export OMARCHY_PATH="/usr/share/omarchy"' ]] || fail "OMARCHY_PATH is the packaged tree" "$(cat "$R/etc/omarchy.conf")"
 [[ $(checkout_digest) == "$before" ]] || fail "the checkout itself is untouched"
 for path in /etc/profile.d/omarchy.sh /usr/share/uwsm/env.d/10-omarchy; do
@@ -430,8 +434,8 @@ interrupt() { # when point step
   fi
   finish
   # pacman's own half-extracted files are backed up too, beside the originals.
-  partial='^\./converted/files/usr/share/omarchy/'
-  [[ $(outcome | grep -v "$partial") == "$(grep -v "$partial" <<<"$baseline")" ]] ||
+  partial='^\./converted/files/(usr/share/omarchy/|usr/bin/omarchy-hw-apple$)'
+  [[ $(outcome | grep -Ev "$partial") == "$(grep -Ev "$partial" <<<"$baseline")" ]] ||
     fail "killed $when $point, the resumed migration ends where an uninterrupted one does" "$(diff <(echo "$baseline") <(outcome))"
   [[ $point == "extraction" || $(outcome) == "$baseline" ]] || fail "killed $when $point, the backup matches an uninterrupted one"
   [[ $when$point == "midtransaction" || $when$point == "midextraction" ]] && transactions=2
@@ -730,7 +734,7 @@ grep -q "HOOKS base udev plymouth keyboard autodetect microcode modconf kms keym
   grep -qx hooks/encrypt "$F/esp/initramfs-linux-aurora.img" ||
   fail "the transaction, with the HOOKS baseline installed, still built the busybox image GRUB boots" "$(cat "$F/esp/initramfs-linux-aurora.img")"
 [[ $(grep -E '^(mkinitcpio|update-grub|boot-check|umount|mount|limine-boot)' "$F/boot.log" | tr '\n' '|') == \
-  "boot-check pending --boot-chain|mkinitcpio -p linux-aurora|update-grub |boot-check pending --boot-chain linux-aurora|umount /boot|mount /boot/efi|mkinitcpio -p linux-aurora|limine-boot activate OMARCHY_PATH=/usr/share/omarchy|boot-check pending --boot-chain linux-aurora|" ]] ||
+  "boot-check pending --boot-chain|mkinitcpio -p linux-aurora|update-grub |boot-check pending --boot-chain linux-aurora|umount /boot|mount /boot/efi|mkinitcpio -p linux-aurora|limine-boot activate OMARCHY_PATH=/usr/share/omarchy|boot-check pending --boot-chain linux-aurora|boot-check pending --boot-chain linux-aurora|" ]] ||
   fail "the busybox image and GRUB are rebuilt and checked, then the ESP moves and the new image is built, before Limine takes the slot" "$(cat "$F/boot.log")"
 [[ $(grep '^cryptsetup' "$F/pacman.log" | cut -d' ' -f2 | sort -u | xargs) == "luksHeaderBackup luksUUID" ]] ||
   fail "the LUKS header, keyslots and passphrase are never changed, only backed up and read" "$(grep cryptsetup "$F/pacman.log")"

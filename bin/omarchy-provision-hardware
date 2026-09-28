@@ -88,6 +88,9 @@ mkdir -p "$(dirname "$OMARCHY_INSTALL_LOG_FILE")"
 # for this run's rebuild instead, so the image is built once, after the last
 # step. The request stays on disk until that rebuild lands.
 export OMARCHY_IMAGE_BOOT_REBUILD=$omarchy_image_boot_rebuild
+# Tells a step it runs on the booted machine, after boot already brought up the
+# targets its units hang off (see install/hardware/bluetooth.sh).
+export OMARCHY_IMAGE_DEFERRED_HARDWARE=1
 
 # Images ship no pacman sync databases, so a step that installs a package fails
 # until they are fetched. Only after a step fails, once per run, are they fetched

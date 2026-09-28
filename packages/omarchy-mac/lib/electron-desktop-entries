@@ -1,0 +1,40 @@
+#!/bin/bash
+# The user's side of the Electron wrappers electron-launchers installs: a
+# desktop entry of the user's own that names the real binary would bypass the
+# wrapper, so runtime's omarchy-cmd-desktop-exec-repair points it at the
+# wrapper once that is in place. omarchy-mac-setup-user runs this as the user;
+# a wrapper that is not ready yet (exit 3 or 4 from --check) is skipped.
+set -euo pipefail
+[[ $(omarchy-hw-platform) == "apple-silicon" ]] || exit 0
+bind_dir=${OMARCHY_ELECTRON_GL_BIND_DIR:-/usr/local/bin}
+applications=$HOME/.local/share/applications
+for app in chromium 1password cursor; do
+  case $app in
+    chromium)
+      real=${OMARCHY_CHROMIUM_BIN:-/usr/bin/chromium}
+      vendor=${OMARCHY_CHROMIUM_DESKTOP:-/usr/share/applications/chromium.desktop}
+      ;;
+    1password)
+      real=${OMARCHY_1PASSWORD_BIN:-/opt/1Password/1password}
+      vendor=${OMARCHY_1PASSWORD_DESKTOP:-/usr/share/applications/1password.desktop}
+      ;;
+    cursor)
+      real=${OMARCHY_CURSOR_BIN:-/usr/bin/cursor}
+      vendor=${OMARCHY_CURSOR_DESKTOP:-/usr/share/applications/cursor.desktop}
+      ;;
+  esac
+  [[ -x $real ]] || continue
+  status=0
+  omarchy-cmd-electron-gl-wrap --check "$app" "$real" || status=$?
+  if (( status == 0 )); then
+    omarchy-cmd-desktop-exec-repair "$applications/$app.desktop" "$vendor" "$bind_dir/$app" "$real" "$app"
+    if [[ $app == "cursor" ]]; then
+      omarchy-cmd-desktop-exec-repair "$applications/cursor-url-handler.desktop" \
+        /usr/share/applications/cursor-url-handler.desktop "$bind_dir/cursor" "$real" cursor
+    fi
+  elif (( status == 3 || status == 4 )); then
+    echo "Skipping $app desktop repair: managed wrapper is not ready" >&2
+  else
+    exit "$status"
+  fi
+done
