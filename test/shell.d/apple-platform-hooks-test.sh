@@ -6,11 +6,12 @@ require_command lua
 require_command node
 
 # omarchy-mac fills Omarchy's platform hooks with the Mac's defaults: early
-# Hyprland defaults (trackpad, lid switch, capture chords, Shift+brightness on
-# the keyboard backlight, menus on the built-in screen), the keybindings menu's
-# key names and the notch the bar keeps clear of. The runtime carries none of
-# them. OMARCHY_TEST_RUNTIME points the test at another runtime layout (an
-# upstream checkout with the same hooks) to show the package behaves the same.
+# Hyprland defaults (lid switch, capture chords, Shift+brightness on the
+# keyboard backlight, menus on the built-in screen), settings (the trackpad),
+# the keybindings menu's key names and the notch the bar keeps clear of. The
+# runtime carries none of them. OMARCHY_TEST_RUNTIME points the test at another
+# runtime layout (an upstream checkout with the same hooks) to show the package
+# behaves the same.
 
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
@@ -105,7 +106,23 @@ bound "$apple" "SHIFT + XF86MonBrightnessUp" "omarchy-brightness-keyboard up" &&
   fail "the Mac's Shift+brightness replaces Omarchy's display maximum instead of joining it" "$apple"
 grep -Fxq $'device\tapple-mtp-multi-touch\tfalse' <<<"$apple" && grep -Fxq $'device\tapple-spi-trackpad\tfalse' <<<"$apple" ||
   fail "a Mac's built-in trackpad does not tap to click" "$apple"
+# A runtime with the settings slot loads settings/apple.lua itself; an older
+# one gets it through defaults/apple.lua. Either way each device is set once.
+(( $(grep -c $'^device\tapple-spi-trackpad\t' <<<"$apple") == 1 && $(grep -c $'^device\tapple-mtp-multi-touch\t' <<<"$apple") == 1 )) ||
+  fail "the Mac's trackpad settings load once" "$apple"
+if [[ -f $runtime/default/hypr/platform.lua ]]; then
+  trackpad_line=$(grep -n $'^device\tapple-spi-trackpad\t' <<<"$apple" | cut -d: -f1)
+  terminal_line=$(grep -n $'^bind\tSUPER + RETURN\t' <<<"$apple" | cut -d: -f1)
+  [[ -n $trackpad_line && -n $terminal_line ]] && (( trackpad_line > terminal_line )) ||
+    fail "with the settings slot, the Mac's trackpad settings follow Omarchy's defaults" "$apple"
+fi
 pass "a Mac gets its lid switch, capture chords, keyboard backlight chords and trackpad from omarchy-mac"
+
+tapping=$(load_config apple "$packaged" 'hl.device({ name = "apple-spi-trackpad", tap_to_click = true })') ||
+  fail "the config loads with the user's tap-to-click" "$tapping"
+[[ $(grep $'^device\tapple-spi-trackpad\t' <<<"$tapping" | tail -n 1) == $'device\tapple-spi-trackpad\ttrue' ]] ||
+  fail "the user's input.lua turns tap-to-click back on" "$tapping"
+pass "the user's input.lua replaces the Mac's trackpad settings"
 
 for output in "$other" "$bare"; do
   ! grep -q 'Apple SMC\|omarchy-capture-screenshot \(fullscreen\|region\|windows\)$\|SHIFT + XF86MonBrightness.*brightness-keyboard\|^device\|focus apple' <<<"$output" ||
@@ -183,6 +200,7 @@ hl = {
   dsp = { focus = function(args) return args end, exec_cmd = function(cmd) return cmd end },
   dispatch = function(dispatcher) print("focus " .. dispatcher.monitor) end,
   device = function() end,
+  config = function() end,
   bind = function(_, dispatcher, opts) if opts and opts.device then focus = dispatcher end end,
   get_monitors = function()
     local monitors = {}
@@ -212,7 +230,7 @@ pass "the built-in screen focus handles external, built-in only and clamshell la
 decorated() {
   PATH="$tmpdir/apple-bin:$PATH" lua - "$packaged/default/hypr/platform/defaults/apple.lua" "$@" <<'LUA'
 local file, dispatcher, command = arg[1], arg[2], arg[3]
-hl = { device = function() end, bind = function(_, _, opts) if opts and opts.device then print("focus") end end }
+hl = { device = function() end, config = function() end, bind = function(_, _, opts) if opts and opts.device then print("focus") end end }
 o = { bind_decorators = {}, bind = function() end, shell_succeeds = function() return true end }
 _G.omarchy_default_bindings = false
 dofile(file)

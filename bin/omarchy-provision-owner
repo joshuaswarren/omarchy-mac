@@ -9,10 +9,9 @@
 # behind. Asks for the user (the configurator's Step 2), creates it with the
 # groups system setup recorded, finalizes it offline from the stashed Node
 # tarball, re-keys LUKS from the throwaway install passphrase to the user's
-# password, and hands off to SDDM. Where the platform's boot package records
-# the kept key slots it also adds a recovery keyslot, shown once; on Apple
-# Silicon that package also takes the auto-unlock out of the Mac's boot chain,
-# all through omarchy-lifecycle-dispatch.
+# password, and hands off to SDDM. A platform whose boot package owns its boot
+# chain prepares it, drops the install key's unlock from it and records the
+# kept key slot through omarchy-lifecycle-dispatch.
 
 # Password-bearing flows must never inherit shell tracing.
 set +x
@@ -25,7 +24,6 @@ OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
 PROVISIONING_DIR="${OMARCHY_PROVISIONING_DIR:-/var/lib/omarchy/provisioning}"
 LOG_FILE="${OMARCHY_PROVISION_OWNER_LOG:-/var/log/omarchy-provision-owner.log}"
 REKEY_STATE="${OMARCHY_LUKS_REKEY_STATE:-$PROVISIONING_DIR/luks-rekey.state}"
-RECOVERY_ACK_PHRASE="I wrote it down"
 
 export PATH="$OMARCHY_PATH/bin:$PATH"
 
@@ -695,16 +693,6 @@ user_groups() {
   echo "$groups"
 }
 
-# The platform's boot package decides: one that records the owner's and the
-# recovery slot for its boot checks (luks-slots) gets a recovery key, as
-# omarchy-mx-mac gave every Mac. Elsewhere setup keeps the owner's password
-# alone. Returns 2 when dispatch cannot tell.
-recovery_key_offered() {
-  local record
-  record=$("$OMARCHY_PATH/bin/omarchy-lifecycle-dispatch" --resolve luks-slots) || return 2
-  [[ -n $record ]]
-}
-
 # Resolve the crypto_LUKS partition backing the root, or return non-zero if
 # the root is not on LUKS. Prefers the cmdline cryptdevice= spec (archinstall
 # writes PARTUUID=, the pre-mounted path UUID=), and falls back to walking the
@@ -950,48 +938,16 @@ luks_auto_unlock_drop() {
   fi
 }
 
-# The platform records the slots the re-key keeps; a no-op where nothing does.
+# The platform records the slot the re-key keeps, and no recovery slot; a no-op
+# where nothing does.
 luks_record_slots() {
-  "$OMARCHY_PATH/bin/omarchy-lifecycle-dispatch" luks-slots "owner=$1" "recovery=$2" >>"$LOG_FILE" 2>&1
-}
-
-# Show the recovery passphrase once, full-screen, until the owner types the
-# acknowledgement phrase. No re-show path. The value is never written to disk,
-# never placed in a process argument list (ps), and the screen is cleared
-# afterwards (including tty scrollback) so it does not linger.
-show_recovery_key() {
-  local key=$1 typed=""
-  [[ -n $key ]] || return 0
-  # Never from the background worker: its stdout is the persistent log.
-  [[ -z ${OMARCHY_PROVISION_WORKER:-} ]] || fail "the recovery key can only be shown on the setup terminal"
-  printf '%s' "$SHOW_CURSOR"
-  clear_logo
-  echo
-  if [[ ${RECOVERY_REPLACED:-0} == 1 ]]; then
-    say "Setup was interrupted before recovery-key confirmation."
-    say "Replace any earlier copy with the new recovery key shown below."
-    echo
-  fi
-  say "This is your disk recovery key. Write it down and keep it somewhere safe."
-  say "It will not be shown again, and it is not stored on this machine."
-  echo
-  printf '%s' "$key" | gum style --bold --foreground 3 --padding "1 0 1 $PADDING_LEFT"
-  echo
-  say "Type '$RECOVERY_ACK_PHRASE' to continue."
-  while true; do
-    typed=$(gum input --placeholder "$RECOVERY_ACK_PHRASE" --prompt "> ") || true
-    [[ $typed == "$RECOVERY_ACK_PHRASE" ]] && break
-    say --foreground 1 "Type exactly: $RECOVERY_ACK_PHRASE"
-  done
-  printf '\e[3J\e[2J\e[H'
-  clear_logo
-  RECOVERY_ACKED=1
+  "$OMARCHY_PATH/bin/omarchy-lifecycle-dispatch" luks-slots "owner=$1" "recovery=" >>"$LOG_FILE" 2>&1
 }
 
 # Move the LUKS volume from the throwaway install passphrase to the user's
 # password and retire every other slot (throwaway + any seller keys a reset
-# left behind) but an acknowledged recovery key. luks_rekey journals each step,
-# so an interrupted attempt resumes where it stopped.
+# left behind). luks_rekey journals each step, so an interrupted attempt
+# resumes where it stopped.
 rekey_luks() {
   luks_rekey_pending || return 0
 
@@ -1006,7 +962,7 @@ rekey_luks() {
 }
 
 # A re-key interrupted after the staged key was retired can only finish with
-# the password the disk already holds, and never with the recovery key.
+# the password the disk already holds.
 rekey_accepts_password() {
   local -
   set +x
@@ -1132,13 +1088,6 @@ run_provisioning() {
     log_step "LUKS re-key complete"
   fi
 
-  # The recovery key the owner acknowledged can also set a new password, from
-  # a boot unlocked with it (omarchy-drive-recover).
-  if [[ -n $(luks_rekey_recovery_slot) ]]; then
-    log_step "arming the password reset with the recovery key"
-    "$OMARCHY_PATH/bin/omarchy-drive-recover" --arm || return 1
-  fi
-
   # After a factory reset on an unencrypted machine nothing above rebuilds the
   # boot entries, so entries keyed to the previous machine identity would
   # linger and go hash-stale on the first UKI rebuild. Refresh them now.
@@ -1159,8 +1108,8 @@ run_provisioning() {
 }
 
 # Where the platform's boot package owns the boot chain, it must be ready to
-# finish setup, and say whether setup adds a recovery key, before the owner is
-# asked anything.
+# finish setup, and able to record the kept key slot, before the owner is asked
+# anything.
 platform_ready() {
   local error
   if error=$("$OMARCHY_PATH/bin/omarchy-lifecycle-dispatch" provision-prepare 2>&1 >>"$LOG_FILE") &&
@@ -1193,11 +1142,7 @@ run_setup() {
     fi
     confirm_form || continue
     if ! rekey_accepts_password; then
-      if luks_recovery_passphrase "$password"; then
-        notice "That is the disk recovery key. Choose a password of your own." 4
-      else
-        notice "Setup already set the disk password. Enter that same password." 4
-      fi
+      notice "Setup already set the disk password. Enter that same password." 4
       continue
     fi
     break
@@ -1209,27 +1154,7 @@ run_setup() {
   rm -f "$FINALIZE_WARNING_FLAG"
   echo account >"$STATE_FILE"
 
-  recovery_key=""
-  RECOVERY_ACKED=0
-  local offered=0
-  recovery_key_offered || offered=$?
-  if (( offered == 2 )); then
-    say --foreground 1 "Could not tell whether setup adds a disk recovery key; will retry."
-    return 1
-  fi
-  if (( offered == 0 )) && [[ -f $PROVISIONING_DIR/luks-key ]]; then
-    local rekey_device
-    if ! rekey_device=$(luks_device) || [[ ! -e $rekey_device ]]; then
-      say --foreground 1 "Could not locate the LUKS device to re-key."
-      return 1
-    fi
-    prepare_luks_recovery "$rekey_device" || {
-      say --foreground 1 "Could not prepare and confirm a disk recovery key; will retry."
-      return 1
-    }
-  fi
-
-  OMARCHY_PROVISION_WORKER=1 run_provisioning >>"$LOG_FILE" 2>&1 &
+  run_provisioning >>"$LOG_FILE" 2>&1 &
   local worker=$!
 
   set_now
@@ -1250,7 +1175,6 @@ run_setup() {
     printf '%s' "$SHOW_CURSOR"
     return "$status"
   fi
-  recovery_key=""
 
   # One full-bar frame so the finish doesn't cut in mid-progress.
   echo done >"$STATE_FILE"
@@ -1276,8 +1200,7 @@ run_setup() {
 
 # Shared cryptographic operations are core code; a platform's boot package only
 # adapts its boot chain, through omarchy-lifecycle-dispatch.
-source "$OMARCHY_PATH/install/provisioning/luks-rekey.sh" &&
-  source "$OMARCHY_PATH/install/provisioning/luks-recovery.sh" || {
+source "$OMARCHY_PATH/install/provisioning/luks-rekey.sh" || {
   echo "Required LUKS provisioning support is unavailable" >&2
   exit 1
 }

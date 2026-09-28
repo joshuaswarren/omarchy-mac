@@ -168,6 +168,20 @@ grep -Fq 'Refusing to replace Apple Silicon platform path' "$test_tmp/err" ||
   fail "an Apple Silicon platform-path conflict reaches a retry"
 pass "Apple Silicon platform paths are never moved for package conflicts"
 
+# omarchy-settings ships its memory, USB and mkinitcpio drop-ins on aarch64 too,
+# so an unowned copy on a Mac is no longer refused. The live path can't be
+# staged here: the move fails after the check, which is what this looks for.
+for path in /etc/modprobe.d/omarchy-usb-autosuspend.conf /etc/systemd/oomd.conf.d/10-omarchy.conf \
+  /etc/tmpfiles.d/omarchy-zswap.conf /usr/lib/systemd/user/app.slice.d/10-oomd.conf \
+  /usr/lib/systemd/zram-generator.conf.d/90-omarchy.conf /etc/mkinitcpio.conf.d/zz-omarchy-test-absent.conf; do
+  fresh_work
+  write_report omarchy-settings "$path"
+  APPLE_SILICON=1 run_update >"$test_tmp/out" 2>"$test_tmp/err" || true
+  ! grep -Fq 'Refusing to replace' "$test_tmp/err" ||
+    fail "an aarch64 omarchy-settings drop-in is refused on Apple Silicon: $path"
+done
+pass "the drop-ins omarchy-settings ships on aarch64 are not refused on Apple Silicon"
+
 # The path is used literally, so glob characters in a name mean nothing.
 fresh_work
 globby="$work/omarchy-[1].conf"

@@ -33,7 +33,7 @@ Work starts immediately and agentically: install and test on real Macs now, rele
 5. As a Mac owner, I want the download to continue while I pick a new partition size, so that resizing doesn't restart a multi-gigabyte download.
 6. As a Mac owner, I want to choose disk encryption during installation, so that my data is protected from first boot.
 7. As a Mac owner who chose encryption, I want the temporary install key replaced by my own password on first boot, so that no factory key can unlock my disk.
-8. As a Mac owner, I want a recovery passphrase created during owner provisioning, so that I can recover if I forget my password.
+8. As a Mac owner, I want one password for the disk, my account and root, as on every Omarchy install, with no separate recovery key (owner decision 2026-09-28, matching upstream's default; a Mac set up earlier keeps its recovery passphrase as a second disk password).
 9. As a Mac owner, I want the installed system to boot through Limine with snapshot entries, so that I get the same recovery experience as x86 Omarchy.
 10. As a Mac owner, I want the Aurora kernel by default, so that USB4 and all my external displays work.
 11. As a Mac owner, I want every package I install to be signature-verified, so that a compromised mirror can't tamper with my system.
@@ -142,7 +142,7 @@ Work starts immediately and agentically: install and test on real Macs now, rele
 
 ### Encryption, provisioning and boot lifecycle
 
-- All mx-mac encryption features are ported: in-place LUKS conversion in the initrd, `install.conf` handoff, first-boot re-key, recovery passphrase, temporary-key removal, password sync and factory reset.
+- All mx-mac encryption features are ported: in-place LUKS conversion in the initrd, `install.conf` handoff, first-boot re-key, temporary-key removal, password sync and factory reset.
 - **Layering:**
   - **Upstream keeps orchestration:** the owner wizard, account creation, generic LUKS discovery, retry journals, locks, snapshots, the migration runner and the update flow.
   - **Upstream gains a small fixed-operation dispatch interface.** On a platform with no implementation, optional operations are no-ops and required ones fail explicitly. Qualcomm can implement the same interface.

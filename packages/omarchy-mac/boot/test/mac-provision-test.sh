@@ -403,6 +403,8 @@ TEST_KEYSLOTS="4 5" run luks-slots owner=4 recovery=5 || fail "luks-slots record
 state_is $'owner_slot=4\nrecovery_slot=5' "both slots are recorded"
 TEST_KEYSLOTS="4" run luks-slots owner=4 recovery= || fail "an empty recovery= records none" "$(cat "$test_tmp/err")"
 state_is 'owner_slot=4' "an empty recovery= drops the recovery slot"
+TEST_KEYSLOTS="6" run luks-slots owner=6 || fail "luks-slots records an owner-only disk" "$(cat "$test_tmp/err")"
+state_is 'owner_slot=6' "an owner-only disk keeps recording no recovery slot"
 pass "luks-slots records the owner's and the recovery slot the header holds, keeping the rest of encrypt.state"
 
 refused() {
@@ -442,3 +444,39 @@ rm "$root/boot/omarchy/encrypt.state"
 run luks-slots owner=2 || fail "a Mac without encrypt.state has nothing to record"
 [[ ! -e $root/boot/omarchy/encrypt.state ]] || fail "luks-slots creates no encrypt.state"
 pass "luks-slots records nothing on a Mac the image did not encrypt, and waits for an unfinished conversion"
+
+# ── luks-slots --owner ─────────────────────────────────────────────────────
+# Read-only: the recorded owner slot, checked against the header, on stdout.
+owner_query() {
+  local before after
+  before=$(snapshot)
+  run luks-slots --owner >"$test_tmp/out" && owner_status=0 || owner_status=$?
+  after=$(snapshot)
+  [[ $after == "$before" ]] || fail "luks-slots --owner changes no file" "$(diff <(echo "$before") <(echo "$after"))"
+}
+owner_refused() {
+  local context=$1 says=$2
+  owner_query
+  (( owner_status != 0 )) || fail "luks-slots --owner refuses $context"
+  [[ ! -s $test_tmp/out ]] || fail "$context: luks-slots --owner prints no slot" "$(cat "$test_tmp/out")"
+  error_says "$says"
+}
+
+slots_fixture
+TEST_KEYSLOTS="2 3" owner_query
+(( owner_status == 0 )) || fail "luks-slots --owner reads a recorded slot the header holds" "$(cat "$test_tmp/err")"
+[[ $(cat "$test_tmp/out") == 2 ]] || fail "luks-slots --owner prints exactly the owner's slot" "$(cat "$test_tmp/out")"
+TEST_KEYSLOTS="2 3" run luks-slots --owner recovery=3 && fail "luks-slots --owner takes no other arguments"
+error_says "takes no other arguments"
+TEST_KEYSLOTS="3" owner_refused "an owner slot the header does not hold" "has no key in the recorded owner slot 2"
+TEST_DUMP_FAIL=1 owner_refused "an unreadable header" "Could not read the key slots of"
+TEST_KEYSLOTS="3" TEST_TOKENS="2" owner_refused "a keyring token numbered like the owner's slot" "has no key in the recorded owner slot 2"
+sed -i 's/^owner_slot=.*/owner_slot=two/' "$root/boot/omarchy/encrypt.state"
+TEST_KEYSLOTS="2 3" owner_refused "a non-numeric owner slot" "records owner_slot=two, which is not a LUKS key slot number"
+sed -i 's/^owner_slot=.*/owner_slot=32/' "$root/boot/omarchy/encrypt.state"
+TEST_KEYSLOTS="2 3 32" owner_refused "an owner slot out of range" "records owner_slot=32"
+sed -i '/^owner_slot=/d' "$root/boot/omarchy/encrypt.state"
+TEST_KEYSLOTS="2 3" owner_refused "no recorded owner slot" "No owner key slot is recorded in"
+rm "$root/boot/omarchy/encrypt.state"
+TEST_KEYSLOTS="2 3" owner_refused "a missing encrypt.state" "is missing"
+pass "luks-slots --owner prints the recorded owner slot the header holds, refuses a missing or invalid record, and changes nothing"

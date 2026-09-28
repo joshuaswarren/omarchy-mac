@@ -76,4 +76,4 @@ pacman-conf --repo-list
 
 For an update that stopped, add the update output and `/var/log/pacman.log`. For an installer that stopped, add the app's log folder under `~/Library/Logs/`.
 
-Never post passwords, your recovery passphrase, Wi-Fi credentials, private keys or complete connection profiles.
+Never post passwords, Wi-Fi credentials, private keys or complete connection profiles.
