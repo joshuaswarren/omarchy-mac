@@ -36,3 +36,9 @@ Swipe sideways with three fingers to move between workspaces, as in macOS, inclu
 ```lua
 omarchy_workspace_gesture = false
 ```
+
+Stepping into empty workspaces is a Mac default for every workspace swipe, yours included. To step only through workspaces that exist, as Hyprland does elsewhere, add this line to `~/.config/hypr/input.lua`:
+
+```lua
+hl.config({ gestures = { workspace_swipe_use_r = false } })
+```

@@ -200,6 +200,7 @@ hl = {
   dsp = { focus = function(args) return args end, exec_cmd = function(cmd) return cmd end },
   dispatch = function(dispatcher) print("focus " .. dispatcher.monitor) end,
   device = function() end,
+  config = function() end,
   bind = function(_, dispatcher, opts) if opts and opts.device then focus = dispatcher end end,
   get_monitors = function()
     local monitors = {}
@@ -229,7 +230,7 @@ pass "the built-in screen focus handles external, built-in only and clamshell la
 decorated() {
   PATH="$tmpdir/apple-bin:$PATH" lua - "$packaged/default/hypr/platform/defaults/apple.lua" "$@" <<'LUA'
 local file, dispatcher, command = arg[1], arg[2], arg[3]
-hl = { device = function() end, bind = function(_, _, opts) if opts and opts.device then print("focus") end end }
+hl = { device = function() end, config = function() end, bind = function(_, _, opts) if opts and opts.device then print("focus") end end }
 o = { bind_decorators = {}, bind = function() end, shell_succeeds = function() return true end }
 _G.omarchy_default_bindings = false
 dofile(file)
