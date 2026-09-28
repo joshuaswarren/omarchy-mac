@@ -126,7 +126,7 @@ fi
 [[ $(uname -m) == aarch64 ]] || fail "the container architecture must be aarch64 (got $(uname -m))"
 
 # A real image: the keymap and vconsole.conf reach it, and a non-Latin layout does not.
-pacman --disable-sandbox -Sy --noconfirm --needed mkinitcpio kbd systemd binutils kmod >/dev/null 2>&1
+pacman --disable-sandbox -Syu --noconfirm --needed mkinitcpio kbd systemd binutils kmod plymouth libxkbcommon >/dev/null 2>&1
 kver=$(uname -r)
 mkdir -p "/lib/modules/$kver/kernel/extra"
 touch "/lib/modules/$kver/modules.order" "/lib/modules/$kver/modules.builtin" "/lib/modules/$kver/modules.builtin.modinfo"
@@ -146,7 +146,7 @@ cat >/etc/mkinitcpio.conf <<'CONF'
 MODULES=()
 BINARIES=()
 FILES=()
-HOOKS=(base systemd)
+HOOKS=(base systemd plymouth)
 COMPRESSION=gzip
 CONF
 
@@ -170,6 +170,23 @@ chroot "$tmp/danish" /usr/bin/loadkeys -b dk-latin1 >/dev/null 2>&1 ||
   fail "loadkeys resolves dk-latin1 and its includes inside the image"
 echo 'ok - a Danish image carries vconsole.conf, the dk-latin1 keymap and loadkeys, and the keymap resolves'
 
+# The check owner setup runs on the image it rebuilt, on this real one.
+source "$ROOT/lib/boot-image-layout.sh"
+missing=$(boot_image_layout_missing "$tmp/danish" /etc/vconsole.conf 0)
+[[ -z $missing ]] || fail "the boot image check finds everything the Danish layout needs" "$missing"
+loads=$(boot_image_layout_loads "$tmp/danish" /etc/vconsole.conf) ||
+  fail "the Danish keymap and XKB layout load from the image's own files" "$loads"
+rm "$tmp/danish/usr/share/X11/xkb/symbols/dk"
+if loads=$(boot_image_layout_loads "$tmp/danish" /etc/vconsole.conf); then
+  fail "an image without the dk XKB symbols does not load the layout"
+fi
+[[ $loads == "the XKB layout XKBLAYOUT=dk XKBMODEL=pc105 XKBOPTIONS=terminate:ctrl_alt_bksp" || $loads == "the XKB layout XKBMODEL=pc105 XKBLAYOUT=dk XKBOPTIONS=terminate:ctrl_alt_bksp" ]] ||
+  fail "the failure names the XKB layout" "$loads"
+echo 'ok - the boot image check proves a real Danish image loads its keymap and XKB layout from its own files'
+
+# Arch's plymouth hook bundles a non-empty /etc/vconsole.conf by itself, so the
+# Russian image is built without it to check what the drop-in leaves out.
+sed -i 's/^HOOKS=.*/HOOKS=(base systemd)/' /etc/mkinitcpio.conf
 vconsole KEYMAP=ru XKBLAYOUT=ru
 build russian
 [[ ! -e $tmp/russian/etc/vconsole.conf ]] || fail "a Russian image carries no vconsole.conf"
