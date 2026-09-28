@@ -4,8 +4,20 @@
 # omarchy:examples=omarchy restart audio | omarchy-restart-audio
 
 services=(wireplumber.service pipewire.service pipewire-pulse.service)
-shell_config="$OMARCHY_PATH/shell"
+# The running shell belongs to the session, which may disagree with a caller
+# opened after a dev link/unlink; omarchy-restart-shell resolves it the same way.
+session_omarchy_path=$(systemctl --user show-environment 2>/dev/null | sed -n 's/^OMARCHY_PATH=//p' | tail -n 1)
+: "${session_omarchy_path:=$OMARCHY_PATH}"
+shell_config="$session_omarchy_path/shell"
 runtime_dir=${XDG_RUNTIME_DIR:-/run/user/$UID}
+
+# From outside the session (e.g. over ssh), find Hyprland from its newest
+# instance runtime dir, as omarchy-restart-shell does, so the lock state can
+# be read.
+if [[ -z ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
+  hypr_dir=$(find "$runtime_dir/hypr" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -n 1 | cut -d' ' -f2-)
+  [[ -n $hypr_dir ]] && export HYPRLAND_INSTANCE_SIGNATURE=${hypr_dir##*/}
+fi
 suspend_offset_before=""
 sleep_inhibitor=""
 shell_down=0
@@ -57,7 +69,7 @@ shell_stop_blocker() {
     *) echo "the lock state is unknown"; return ;;
   esac
 
-  status=$(OMARCHY_SHELL_IPC_TIMEOUT=3s omarchy-shell lock status 2>/dev/null)
+  status=$(OMARCHY_PATH="$session_omarchy_path" OMARCHY_SHELL_IPC_TIMEOUT=3s omarchy-shell lock status 2>/dev/null)
   state=$(jq -r '
     if type != "object" then "unknown"
     elif .secure == true or .requested == true then "locked"
@@ -90,14 +102,15 @@ suspend_offset() {
 }
 
 # Nothing can lock the screen while the shell is stopped, so block sleep and
-# wait until logind holds the block. Closing the lid still suspends (logind
-# ignores inhibitors for it by default), which restore_shell catches.
+# wait until logind holds the block, which ends with this script even when it
+# is killed. Closing the lid still suspends (logind ignores inhibitors for it
+# by default), which restore_shell catches.
 block_sleep() {
   local attempt
 
   systemd-inhibit --what=sleep --mode=block --who=omarchy-restart-audio \
     --why="The Omarchy shell is stopped while audio restarts" \
-    sleep infinity >/dev/null 2>&1 {repair_lock}>&- &
+    tail --pid=$$ -f /dev/null >/dev/null 2>&1 {repair_lock}>&- &
   sleep_inhibitor=$!
 
   for (( attempt = 0; attempt < 30; attempt++ )); do
@@ -125,13 +138,13 @@ lock_screen() {
   local state
 
   while (( SECONDS < deadline )); do
-    state=$(OMARCHY_SHELL_IPC_TIMEOUT=3s omarchy-shell lock status 2>/dev/null |
+    state=$(OMARCHY_PATH="$session_omarchy_path" OMARCHY_SHELL_IPC_TIMEOUT=3s omarchy-shell lock status 2>/dev/null |
       jq -r 'if .secure == true then "secure" elif .requested == true then "locking" else "idle" end' 2>/dev/null)
 
     case $state in
       secure) return 0 ;;
       locking) ;;
-      *) OMARCHY_SHELL_IPC_TIMEOUT=3s omarchy-shell lock lock >/dev/null 2>&1 ;;
+      *) OMARCHY_PATH="$session_omarchy_path" OMARCHY_SHELL_IPC_TIMEOUT=3s omarchy-shell lock lock >/dev/null 2>&1 ;;
     esac
 
     sleep 0.5
