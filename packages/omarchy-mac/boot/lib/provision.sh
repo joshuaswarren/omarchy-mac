@@ -18,8 +18,12 @@ LIMINE_GATE=$MAC_BOOT_ROOT/var/lib/omarchy/limine.enabled
 CRYPTTAB=$MAC_BOOT_ROOT/etc/crypttab
 REKEY_STATE=$MAC_BOOT_ROOT/var/lib/omarchy/provisioning/luks-rekey.state
 INSTALL_CONF=$MAC_BOOT_ROOT/var/lib/omarchy/mac-first-boot/install.conf
+VCONSOLE_CONF=$MAC_BOOT_ROOT/etc/vconsole.conf
 # The image's Boot partition, as omarchy-mac-encrypt names it in rd.luks.key=.
 BOOT_UUID=4f4d5801-424f-4f54-8000-000000000001
+
+# shellcheck source=boot-image-layout.sh
+source "$MAC_BOOT_ROOT/usr/lib/omarchy-mac/boot/boot-image-layout.sh"
 
 log_step() { printf '%s\n' "$*" >&2; }
 
@@ -122,6 +126,67 @@ initramfs_orders_firmware() {
   }
 }
 
+# The owner types the disk password at the next boot with the layout the image
+# that boots carries (the initramfs inside the UKI on a Limine Mac), and setup
+# took that password with the layout /etc/vconsole.conf sets now. A retry that
+# picked another layout must not keep the old one in the image, so the image
+# must carry this vconsole.conf and what loads it, and both must load from the
+# image's own files. A layout the image leaves out on purpose (US, or one that
+# cannot type Latin letters) must leave no other layout behind in it. Fails
+# closed when the image cannot be read.
+boot_image_types_layout() {
+  local work status=0
+  work=$(mktemp -d) || return 1
+  boot_image_check_layout "$work" || status=$?
+  rm -rf "$work"
+  return "$status"
+}
+
+boot_image_check_layout() {
+  local work=$1 kernel image label esp tree missing
+  kernel=$(omarchy-mac-kernel) || return 1
+  if limine_mac; then
+    esp=$(limine_esp_path)
+    label="the initramfs inside $esp/EFI/Linux/omarchy_$kernel.efi"
+    image=$work/uki.initrd
+    objcopy -O binary --only-section=.initrd "$MAC_BOOT_ROOT$esp/EFI/Linux/omarchy_$kernel.efi" "$image" 2>/dev/null &&
+      [[ -s $image ]] || {
+      log_step "cannot read $label"
+      return 1
+    }
+  else
+    image=$MAC_BOOT_ROOT/boot/initramfs-$kernel.img
+    label=/boot/initramfs-$kernel.img
+  fi
+  tree=$work/tree
+  mkdir -p "$tree" || return 1
+  (cd "$tree" && lsinitcpio -x "$image" >/dev/null 2>&1) || {
+    log_step "cannot extract $label"
+    return 1
+  }
+
+  if ! vconsole_layout_carried "$VCONSOLE_CONF"; then
+    [[ ! -e $tree/etc/vconsole.conf ]] || boot_image_carries_vconsole "$tree" "$VCONSOLE_CONF" || {
+      log_step "$label still carries the keyboard layout $(vconsole_value KEYMAP "$tree/etc/vconsole.conf")/$(vconsole_value XKBLAYOUT "$tree/etc/vconsole.conf"), not the one /etc/vconsole.conf sets"
+      return 1
+    }
+    return 0
+  fi
+  boot_image_carries_vconsole "$tree" "$VCONSOLE_CONF" || {
+    log_step "$label does not carry the keyboard layout of /etc/vconsole.conf (KEYMAP=$(vconsole_value KEYMAP "$VCONSOLE_CONF") XKBLAYOUT=$(vconsole_value XKBLAYOUT "$VCONSOLE_CONF"))"
+    return 1
+  }
+  missing=$(boot_image_layout_missing "$tree" "$VCONSOLE_CONF" 0)
+  [[ -z $missing ]] || {
+    log_step "$label carries /etc/vconsole.conf but not what loads it at the disk password prompt (missing ${missing//$'\n'/, })"
+    return 1
+  }
+  missing=$(boot_image_layout_loads "$tree" "$VCONSOLE_CONF") || {
+    log_step "$label carries the keyboard layout of /etc/vconsole.conf, but ${missing:-it} does not load from the image's own files"
+    return 1
+  }
+}
+
 # Phase moves to finished. partition= and luks_uuid= stay as the initramfs
 # wrote them; the owner slot, and a recovery slot an older setup's owner
 # acknowledged, come from the re-key journal so later boot checks can prove the
@@ -192,12 +257,17 @@ luks_keyslots() {
     /^Key Slot [0-9]+: ENABLED/ { sub(":", "", $3); print $3 }' <<<"$dump"
 }
 
+# The ESP_PATH /etc/default/limine gives Limine's tooling.
+limine_esp_path() {
+  sed -n -E 's/^[[:space:]]*ESP_PATH=("([^"]*)"|'\''([^'\'']*)'\''|([^[:space:]#"'\'']*)).*/\2\3\4/p' "$LIMINE_DEFAULT" | tail -n 1
+}
+
 # Limine and its UKI go on the ESP the device tree says this Mac boots from.
 esp_selected() {
   local esp limine_esp
   esp=$(omarchy-mac-esp) || return 1
   limine_mac || return 0
-  limine_esp=$(sed -n -E 's/^[[:space:]]*ESP_PATH=("([^"]*)"|'\''([^'\'']*)'\''|([^[:space:]#"'\'']*)).*/\2\3\4/p' "$LIMINE_DEFAULT" | tail -n 1)
+  limine_esp=$(limine_esp_path)
   [[ $limine_esp == "$esp" ]] || {
     log_step "Limine writes to ${limine_esp:-no ESP_PATH}, but this Mac boots from the ESP at $esp"
     return 1
@@ -247,7 +317,7 @@ provision_commit() {
   # The boot-partition key goes last: until then the initramfs still unlocks
   # with it, so a failure only has to put rd.luks.key= back, whichever attempt
   # dropped it.
-  if ! apple_rekey_boot || ! initramfs_orders_firmware; then
+  if ! apple_rekey_boot || ! initramfs_orders_firmware || ! boot_image_types_layout; then
     if [[ -f $BOOT_LUKS_KEY ]] && ! grep -q 'rd.luks.key=' "$GRUB_DEFAULT" 2>/dev/null; then
       log_step "restoring rd.luks.key= for the retry"
       grub_restore_rd_luks_key && omarchy-mac-boot-update >&2 || true

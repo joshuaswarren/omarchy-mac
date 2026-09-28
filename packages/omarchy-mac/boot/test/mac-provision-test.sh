@@ -29,19 +29,64 @@ cat >"$stub_bin/omarchy-mac-kernel" <<'SH'
 #!/bin/bash
 echo linux-aurora
 SH
+# An image's extracted tree sits next to it as <image>.tree; a UKI names the
+# initramfs it carries.
 cat >"$stub_bin/lsinitcpio" <<'SH'
 #!/bin/bash
-[[ $1 == -l && -f $2 ]] && cat "$2"
+[[ $1 == -l && -f $2 ]] && exec cat "$2"
+[[ $1 == -x && -f $2 ]] || exit 1
+tree=$2.tree
+[[ -d $tree ]] || tree=$(head -n 1 "$2").tree
+[[ -d $tree ]] && cp -a "$tree/." .
 SH
+cat >"$stub_bin/objcopy" <<'SH'
+#!/bin/bash
+[[ "$1 $2 $3" == "-O binary --only-section=.initrd" && -f $4 ]] && cp "$4" "$5"
+SH
+# The chroot'ed loadkeys and xkbcli find the layout in the image's own files.
+cat >"$stub_bin/chroot" <<'SH'
+#!/bin/bash
+[[ "$2 $3 $4" == "/usr/bin/loadkeys -q -b" && -x $1/usr/bin/loadkeys && -z ${TEST_LOADKEYS_FAIL:-} ]] || exit 1
+find "$1/usr/share/kbd/keymaps" -name "$5.map*" | grep -q .
+SH
+cat >"$stub_bin/xkbcli" <<'SH'
+#!/bin/bash
+[[ $1 == compile-keymap && -z ${TEST_XKB_FAIL:-} ]] || exit 1
+shift
+while (( $# )); do
+  case $1 in
+    --include) include=$2; shift ;;
+    --layout) layouts=$2; shift ;;
+  esac
+  shift
+done
+for layout in ${layouts//,/ }; do [[ -f $include/symbols/$layout ]] || exit 1; done
+SH
+# mkinitcpio builds from /etc/vconsole.conf as sd-vconsole and the plymouth
+# hook do; keep-layout leaves the previous build's layout in the image.
 cat >"$stub_bin/mkinitcpio" <<SH
 #!/bin/bash
 echo "mkinitcpio \$*" >>"$calls"
 [[ ! -e $test_tmp/fail-mkinitcpio ]] || exit 1
+image=$root/boot/initramfs-linux-aurora.img
 if [[ -e $test_tmp/build-without-firmware ]]; then
-  echo ./usr/lib/systemd/system-generators/systemd-cryptsetup-generator >"$root/boot/initramfs-linux-aurora.img"
+  echo ./usr/lib/systemd/system-generators/systemd-cryptsetup-generator >"\$image"
 else
-  printf '%s\n' "$firmware_listing" >"$root/boot/initramfs-linux-aurora.img"
+  printf '%s\n' "$firmware_listing" >"\$image"
 fi
+[[ ! -e $test_tmp/keep-layout ]] || exit 0
+tree=\$image.tree
+rm -rf "\$tree"
+mkdir -p "\$tree/usr/bin" "\$tree/usr/lib/systemd" "\$tree/usr/share/kbd/keymaps/i386/qwerty" "\$tree/usr/share/X11/xkb/symbols"
+: >"\$tree/usr/bin/plymouthd"
+: >"\$tree/usr/lib/systemd/systemd-vconsole-setup"
+install -m755 /dev/null "\$tree/usr/bin/loadkeys"
+[[ -f $root/etc/vconsole.conf ]] || exit 0
+install -Dm644 "$root/etc/vconsole.conf" "\$tree/etc/vconsole.conf"
+keymap=\$(. "$root/etc/vconsole.conf"; echo "\$KEYMAP")
+layout=\$(. "$root/etc/vconsole.conf"; echo "\$XKBLAYOUT")
+[[ -z \$keymap || -e $test_tmp/build-without-keymap ]] || : >"\$tree/usr/share/kbd/keymaps/i386/qwerty/\$keymap.map.gz"
+[[ -z \$layout ]] || : >"\$tree/usr/share/X11/xkb/symbols/\$layout"
 SH
 cat >"$stub_bin/omarchy-mac-boot-update" <<SH
 #!/bin/bash
@@ -50,6 +95,8 @@ echo "omarchy-mac-boot-update \$cmdline" >>"$calls"
 [[ ! -e $test_tmp/fail-boot-update ]] || exit 1
 if [[ -e $root/var/lib/omarchy/limine.enabled ]]; then
   printf 'ESP_PATH="/boot/efi"\nKERNEL_CMDLINE[default]="%s"\n' "\$cmdline" >"$root/etc/default/limine"
+  mkdir -p "$root/boot/efi/EFI/Linux"
+  echo "$root/boot/initramfs-linux-aurora.img" >"$root/boot/efi/EFI/Linux/omarchy_linux-aurora.efi"
 else
   printf 'linux /vmlinuz-linux-aurora %s\n' "\$cmdline" >"$root/boot/grub/grub.cfg"
 fi
@@ -102,7 +149,7 @@ fixture() {
   printf 'format=1\nencrypt=1\n' >"$root/var/lib/omarchy/mac-first-boot/install.conf"
   printf 'staged_slot=0\nowner_slot=2\nrecovery_slot=3\nrecovery_shown=1\nphase=owner\n' >"$root/var/lib/omarchy/provisioning/luks-rekey.state"
   printf '%s\n' "$firmware_listing" >"$root/boot/initramfs-linux-aurora.img"
-  rm -f "$test_tmp"/fail-* "$test_tmp/build-without-firmware"
+  rm -f "$test_tmp"/fail-* "$test_tmp/build-without-firmware" "$test_tmp/build-without-keymap" "$test_tmp/keep-layout"
   : >"$calls"
 }
 
@@ -338,6 +385,79 @@ for phase in plaintext shrunk reencrypting encrypted unreadable; do
   [[ $(snapshot) == "$before" && ! -s $calls ]] || fail "phase=$phase: the key the conversion resumes with is untouched"
 done
 pass "provision-commit never touches the key an unfinished conversion needs"
+
+# The layout the owner picked in setup reaches the image that asks for the
+# password, and a retry that picked another one replaces it there.
+danish='# Written by systemd-firstboot
+KEYMAP=dk-latin1
+XKBLAYOUT=dk
+XKBMODEL=pc105
+XKBOPTIONS=terminate:ctrl_alt_bksp'
+tree=$root/boot/initramfs-linux-aurora.img.tree
+fixture
+printf '%s\n' "$danish" >"$root/etc/vconsole.conf"
+run provision-commit || fail "a Danish Mac commits" "$(cat "$test_tmp/err")"
+cmp -s "$root/etc/vconsole.conf" "$tree/etc/vconsole.conf" && [[ -f $tree/usr/share/kbd/keymaps/i386/qwerty/dk-latin1.map.gz ]] ||
+  fail "the rebuilt image carries the Danish vconsole.conf and keymap"
+printf 'KEYMAP=us\nXKBLAYOUT=us\n' >"$root/etc/vconsole.conf"
+touch "$test_tmp/keep-layout"
+: >"$calls"
+if run provision-commit; then fail "a retry that picked US refuses an image still typing Danish"; fi
+error_says "still carries the keyboard layout dk-latin1/dk, not the one /etc/vconsole.conf sets"
+grep -Fxq 'mkinitcpio -P' "$calls" || fail "the retry rebuilds before it checks" "$(cat "$calls")"
+rm "$test_tmp/keep-layout"
+run provision-commit || fail "the rebuilt US image commits" "$(cat "$test_tmp/err")"
+printf '%s\n' "$danish" >"$root/etc/vconsole.conf"
+touch "$test_tmp/keep-layout"
+if run provision-commit; then fail "a retry that picked Danish refuses an image still typing US"; fi
+error_says "/boot/initramfs-linux-aurora.img does not carry the keyboard layout of /etc/vconsole.conf (KEYMAP=dk-latin1 XKBLAYOUT=dk)"
+rm "$test_tmp/keep-layout"
+run provision-commit || fail "the rebuilt Danish image commits" "$(cat "$test_tmp/err")"
+rm "$root/etc/vconsole.conf"
+touch "$test_tmp/keep-layout"
+if run provision-commit; then fail "a Mac without vconsole.conf refuses an image still typing Danish"; fi
+rm "$test_tmp/keep-layout"
+pass "provision-commit proves the image carries the layout setup picked, also on a retry that changed it"
+
+fixture
+printf '%s\n' "$danish" >"$root/etc/vconsole.conf"
+touch "$test_tmp/build-without-keymap"
+key_before=$(sha256sum <"$root/boot/omarchy/luks-key")
+if run provision-commit; then fail "an image without the Danish keymap fails commit"; fi
+error_says "carries /etc/vconsole.conf but not what loads it at the disk password prompt (missing the dk-latin1 keymap)"
+[[ $(sha256sum <"$root/boot/omarchy/luks-key") == "$key_before" ]] && grep -Fxq "$grub_line" "$root/etc/default/grub" ||
+  fail "a missing keymap keeps the unattended unlock for the retry"
+rm "$test_tmp/build-without-keymap"
+for failure in TEST_LOADKEYS_FAIL TEST_XKB_FAIL; do
+  fixture
+  printf '%s\n' "$danish" >"$root/etc/vconsole.conf"
+  if env "$failure=1" OMARCHY_MAC_BOOT_ROOT="$root" PATH="$stub_bin:$PATH" "$entry/provision-commit" 2>"$test_tmp/err"; then
+    fail "$failure: a layout that does not load from the image fails commit"
+  fi
+  error_says "does not load from the image's own files"
+  [[ -f $root/boot/omarchy/luks-key ]] || fail "$failure: the key stays for the retry"
+done
+error_says "the XKB layout XKBMODEL=pc105 XKBLAYOUT=dk XKBOPTIONS=terminate:ctrl_alt_bksp does not load"
+pass "a Danish image that lacks the keymap, or whose keymap or XKB layout does not load, keeps the unattended unlock"
+
+limine_fixture
+printf '%s\n' "$danish" >"$root/etc/vconsole.conf"
+run provision-commit || fail "a Danish Limine Mac commits" "$(cat "$test_tmp/err")"
+printf 'KEYMAP=us\nXKBLAYOUT=us\n' >"$root/etc/vconsole.conf"
+touch "$test_tmp/keep-layout"
+if run provision-commit; then fail "a Limine retry refuses a UKI still typing Danish"; fi
+error_says "the initramfs inside /boot/efi/EFI/Linux/omarchy_linux-aurora.efi still carries the keyboard layout dk-latin1/dk"
+rm "$test_tmp/keep-layout"
+limine_fixture
+printf '%s\n' "$danish" >"$root/etc/vconsole.conf"
+printf '%s\n' '#!/bin/bash' 'exit 1' >"$stub_bin/objcopy.fail"
+chmod +x "$stub_bin/objcopy.fail"
+mv "$stub_bin/objcopy" "$stub_bin/objcopy.ok"
+mv "$stub_bin/objcopy.fail" "$stub_bin/objcopy"
+if run provision-commit; then fail "a UKI whose initramfs cannot be read fails commit"; fi
+mv "$stub_bin/objcopy.ok" "$stub_bin/objcopy"
+error_says "cannot read the initramfs inside /boot/efi/EFI/Linux/omarchy_linux-aurora.efi"
+pass "on a Limine Mac the layout is proven in the UKI that boots, and an unreadable one fails closed"
 
 # provision-verify: each leftover alone counts as the staged unlock.
 verify_fixture() {

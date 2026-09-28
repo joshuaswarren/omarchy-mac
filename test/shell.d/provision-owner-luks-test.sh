@@ -51,9 +51,11 @@ printf '%s\n' ./usr/lib/systemd/system-generators/systemd-cryptsetup-generator \
   ./usr/lib/systemd/system/omarchy-vendorfw-initrd.service \\
   ./usr/lib/systemd/system/systemd-cryptsetup@.service.d/omarchy-vendorfw-initrd.conf >"$root/boot/initramfs-linux-aurora.img"
 SH
+# The image holds no vconsole.conf, like one built for a Mac left on the US map.
 cat >"$stub_bin/lsinitcpio" <<'SH'
 #!/bin/bash
-[[ $1 == -l && -f $2 ]] && cat "$2"
+[[ $1 == -l && -f $2 ]] && exec cat "$2"
+[[ $1 == -x && -f $2 ]]
 SH
 cat >"$stub_bin/omarchy-mac-kernel" <<'SH'
 #!/bin/bash
