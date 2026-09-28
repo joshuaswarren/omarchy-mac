@@ -1,6 +1,8 @@
 [Unit]
 Description=Restart audio when it stops responding
-After=pipewire.service pipewire-pulse.service wireplumber.service
+# uwsm imports OMARCHY_PATH into the user manager before it reaches
+# graphical-session.target, but pulls this unit in earlier with the session.
+After=graphical-session.target pipewire.service pipewire-pulse.service wireplumber.service
 PartOf=graphical-session.target
 
 [Service]

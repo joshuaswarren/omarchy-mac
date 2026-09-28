@@ -9,16 +9,15 @@
 #   luks_auto_unlock_present succeeds while any boot-time copy of the staged
 #   key or its unlock configuration remains; luks_auto_unlock_drop removes
 #   them and rebuilds the boot files, restoring the unlock before it fails.
-#   luks_record_slots <owner> <recovery> records the kept slots (recovery empty
-#   when none) wherever the platform's boot checks look for them, and succeeds
-#   where nothing does.
+#   luks_record_slots <owner> records the kept slot wherever the platform's
+#   boot checks look for it, and succeeds where nothing does.
 #
 # The journal (REKEY_STATE) records only the phase and slot numbers, never key
 # material. Phases advance staged → owner → boot → done, each written durably
 # after its step, so an attempt interrupted anywhere resumes from the last one;
 # the retire and record steps before done are idempotent. A retry may still
 # choose a new password while the staged key opens the disk, even after the
-# boot step, so the kept slots are recorded only once they are final. The
+# boot step, so the kept slot is recorded only once it is final. The
 # caller removes the journal with the rest of its provisioning state, so until
 # then a retry can only use the password the disk holds.
 
@@ -111,27 +110,15 @@ luks_rekey_pending() {
   [[ -e $REKEY_STATE ]] || luks_staged_unlock_remains
 }
 
-# The slot of the recovery key the owner acknowledged (luks-recovery.sh).
-luks_rekey_recovery_slot() {
-  [[ $(rekey_state_get recovery_shown || true) == "1" ]] || return 0
-  rekey_state_get recovery_slot || true
-}
-
 # Whether an interrupted re-key can finish with $password. Until the staged key
-# is retired it can add any password; afterwards only one the disk holds. The
-# acknowledged recovery key is never the password.
+# is retired it can add any password; afterwards only one the disk holds.
 luks_rekey_accepts_password() {
   local -
   set +x
-  local device=$1 slot
+  local device=$1
 
   [[ -f $REKEY_STATE ]] || return 0
-  slot=$(luks_slot_for "$password" "$device")
-  if [[ -n $slot ]]; then
-    [[ $slot != "$(luks_rekey_recovery_slot)" ]]
-  else
-    [[ -n $(staged_key_slot "$device") ]]
-  fi
+  [[ -n $(luks_slot_for "$password" "$device") || -n $(staged_key_slot "$device") ]]
 }
 
 # Record the slot $password opens, adding it with the staged key when none does.
@@ -166,11 +153,6 @@ luks_rekey_owner() {
     say --foreground 1 "Choose a disk password different from the temporary install key."
     return 1
   fi
-  if [[ $owner == "$(luks_rekey_recovery_slot)" ]]; then
-    log_step "the owner's password is the recovery key; refusing to keep it as the password"
-    say --foreground 1 "Choose a disk password different from the recovery key."
-    return 1
-  fi
 
   if [[ $phase == "staged" ]]; then
     rekey_state_put owner_slot "$owner" phase owner
@@ -179,24 +161,11 @@ luks_rekey_owner() {
   fi
 }
 
-# The slots setup keeps: the owner's, and a recovery slot (luks-recovery.sh)
-# once the owner acknowledged its key. An unacknowledged one is retired.
-luks_rekey_kept_slots() {
-  local owner recovery
-  owner=$(rekey_state_get owner_slot || true)
-  [[ -n $owner ]] || return 1
-  recovery=$(luks_rekey_recovery_slot)
-  if [[ -n $recovery && $recovery != "$owner" ]]; then
-    printf '%s\n' "$owner" "$recovery" | sort -n
-  else
-    printf '%s\n' "$owner"
-  fi
-}
-
 luks_rekey_retire() {
-  local device=$1 kept slot slots
+  local device=$1 owner slot slots
 
-  if ! kept=$(luks_rekey_kept_slots); then
+  owner=$(rekey_state_get owner_slot || true)
+  if [[ -z $owner ]]; then
     log_step "no owner slot is recorded; refusing to retire LUKS slots"
     return 1
   fi
@@ -207,7 +176,7 @@ luks_rekey_retire() {
     return 1
   fi
   for slot in $slots; do
-    grep -Fxq "$slot" <<<"$kept" && continue
+    [[ $slot == "$owner" ]] && continue
     if ! cryptsetup luksKillSlot -q --key-file <(printf '%s' "$password") "$device" "$slot"; then
       log_step "failed to kill LUKS slot $slot; keeping the staged key for retry"
       say --foreground 1 "Could not remove the throwaway LUKS key; will retry."
@@ -216,14 +185,14 @@ luks_rekey_retire() {
   done
 }
 
-# The staged key must open nothing before it is destroyed: only the kept slots
-# remain and no boot-time copy or unlock configuration is left behind.
+# The staged key must open nothing before it is destroyed: only the owner slot
+# remains and no boot-time copy or unlock configuration is left behind.
 luks_rekey_verify() {
-  local device=$1 kept slots
+  local device=$1 owner slots
 
-  if ! kept=$(luks_rekey_kept_slots) || ! slots=$(luks_dump_slots "$device") ||
-    [[ $(sort -n <<<"$slots") != "$kept" ]]; then
-    log_step "the LUKS slots on $device are not exactly the ones setup keeps"
+  owner=$(rekey_state_get owner_slot || true)
+  if ! slots=$(luks_dump_slots "$device") || [[ -z $owner || $slots != "$owner" ]]; then
+    log_step "LUKS slots other than the owner's remain on $device"
     return 1
   fi
   if [[ -n $(staged_key_slot "$device") ]]; then
@@ -238,8 +207,8 @@ luks_rekey_verify() {
 
 # Order: record the staged slot, add the owner's key, rebuild boot without the
 # auto-unlock (keeping the staged slot as the fallback while that can fail),
-# retire every slot but the kept ones, then verify, record the kept slots for
-# the platform, destroy the staged key and record done.
+# retire every other slot, then verify, record the kept slot for the platform,
+# destroy the staged key and record done.
 # Failing is loud: silently keeping the staged key would leave the disk
 # effectively unencrypted.
 luks_rekey() {
@@ -285,15 +254,18 @@ luks_rekey() {
     log_step "the password does not open the owner slot the finished re-key recorded on $device"
     say --foreground 1 "Use the disk password chosen earlier in setup."
     return 1
+  else
+    # A finished re-key an older runtime journaled may have kept a recovery slot.
+    luks_rekey_retire "$device" || return 1
   fi
 
   if ! luks_rekey_verify "$device"; then
     say --foreground 1 "Could not confirm the temporary install key was removed; will retry."
     return 1
   fi
-  if ! luks_record_slots "$(rekey_state_get owner_slot)" "$(luks_rekey_recovery_slot)"; then
-    log_step "the platform could not record the kept LUKS slots"
-    say --foreground 1 "Could not record the disk's key slots for the boot checks; will retry."
+  if ! luks_record_slots "$(rekey_state_get owner_slot)"; then
+    log_step "the platform could not record the kept LUKS slot"
+    say --foreground 1 "Could not record the disk's key slot for the boot checks; will retry."
     return 1
   fi
 

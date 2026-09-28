@@ -324,19 +324,26 @@ elif (( has_crypttab_root )); then
       fail "/boot/omarchy/encrypt.state is not phase=finished after provisioning"
     owner_slot=$(awk -F= '$1 == "owner_slot" { print $2; exit }' "$encrypt_state")
     recovery_slot=$(awk -F= '$1 == "recovery_slot" { print $2; exit }' "$encrypt_state")
-    [[ -n $owner_slot && -n $recovery_slot ]] ||
-      fail "/boot/omarchy/encrypt.state does not record owner_slot and recovery_slot after provisioning"
+    [[ -n $owner_slot ]] ||
+      fail "/boot/omarchy/encrypt.state does not record owner_slot after provisioning"
     [[ $owner_slot != "$recovery_slot" ]] ||
       fail "/boot/omarchy/encrypt.state records the same slot for owner and recovery"
+
+    # Setup keeps the owner's slot alone; a Mac set up with a recovery key
+    # records that slot too and keeps it.
+    kept_slots=("$owner_slot")
+    [[ -z $recovery_slot ]] || kept_slots+=("$recovery_slot")
 
     # Only the keyslot section: a luks2-keyring token under "Tokens:" looks the same.
     mapfile -t luks_slots < <(awk '
       /^[^[:space:]]/ { keyslots = ($0 == "Keyslots:") }
       keyslots && /^[[:space:]]+[0-9]+:[[:space:]]+luks2/ { sub(":", "", $1); print $1 }' <<<"$luks_dump")
-    (( ${#luks_slots[@]} == 2 )) ||
-      fail "throwaway LUKS keyslot still present after provisioning (${#luks_slots[@]} keyslots, expected 2)"
-    [[ " ${luks_slots[*]} " == *" $owner_slot "* && " ${luks_slots[*]} " == *" $recovery_slot "* ]] ||
-      fail "LUKS header does not contain the recorded owner and recovery slots"
+    (( ${#luks_slots[@]} == ${#kept_slots[@]} )) ||
+      fail "throwaway LUKS keyslot still present after provisioning (${#luks_slots[@]} keyslots, expected ${#kept_slots[@]})"
+    for slot in "${kept_slots[@]}"; do
+      [[ " ${luks_slots[*]} " == *" $slot "* ]] ||
+        fail "LUKS header does not contain the recorded key slot $slot"
+    done
   fi
 elif root_on_luks; then
   fail "encrypted root has no crypttab"

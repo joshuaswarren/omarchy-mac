@@ -6,15 +6,21 @@
 set -euo pipefail
 
 trusted_key=40DFB630FF42BCFFB047046CF0134EE680CAC571
-platform_keyring=archlinux-keyring
-platform_ring=archlinux
+platform_keyrings=(archlinux-keyring)
+platform_rings=(archlinux)
 if omarchy-hw-apple-silicon; then
-  platform_keyring=archlinuxarm-keyring
-  platform_ring=archlinuxarm
+  platform_keyrings=(archlinuxarm-keyring)
+  platform_rings=(archlinuxarm)
+  # The [asahi-alarm] repository signs the Mac's kernel, firmware and audio
+  # packages with a key of its own.
+  if omarchy-pkg-present asahi-alarm-keyring; then
+    platform_keyrings+=(asahi-alarm-keyring)
+    platform_rings+=(asahi-alarm)
+  fi
 fi
 
 # Restore installed trust and revocation metadata before fetching updates.
-sudo pacman-key --populate "$platform_ring"
+sudo pacman-key --populate "${platform_rings[@]}"
 if ! omarchy-pkg-missing omarchy-keyring; then
   sudo pacman-key --populate omarchy
 fi
@@ -33,6 +39,6 @@ sudo pacman-key --lsign-key "$trusted_key"
 # Keyring refresh precedes the full system upgrade. Reinstall even when the
 # version is unchanged, since key material can change without a version bump.
 echo "Update signing keys"
-sudo pacman -Sy --noconfirm omarchy-keyring "$platform_keyring"
-sudo pacman-key --populate omarchy "$platform_ring"
+sudo pacman -Sy --noconfirm omarchy-keyring "${platform_keyrings[@]}"
+sudo pacman-key --populate omarchy "${platform_rings[@]}"
 echo "Keys are correct"

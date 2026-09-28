@@ -114,5 +114,5 @@ EOF
 chmod +x "$stub_bin/lspci" "$stub_bin/omarchy-pkg-add"
 
 OMARCHY_TEST_MUTATION_LOG="$mutation_log" PATH="$stub_bin:/usr/bin:/bin" bash "$ROOT/install/hardware/vulkan.sh"
-[[ $(cat "$mutation_log") == "vulkan-asahi" ]] || fail "Vulkan setup selects vulkan-asahi from the Apple Silicon detector" "$(cat "$mutation_log")"
-pass "Vulkan setup selects vulkan-asahi from the Apple Silicon detector"
+[[ ! -s $mutation_log ]] || fail "Vulkan setup installs nothing on a Mac: vulkan-asahi comes with omarchy-mac" "$(cat "$mutation_log")"
+pass "Vulkan setup installs nothing on a Mac: vulkan-asahi comes with omarchy-mac"

@@ -10,22 +10,25 @@ try {
   stub('sudo','"$@"')
   stub('omarchy-hw-apple-silicon','[[ ${APPLE:-0} == 1 ]]')
   stub('omarchy-pkg-missing','[[ ${MISSING_PACKAGE:-0} == 1 ]]')
+  stub('omarchy-pkg-present','[[ $1 == asahi-alarm-keyring && ${ASAHI_KEYRING:-0} == 1 ]]')
   stub('pacman-key','echo "key $*" >> "$CALLS"; [[ "$*" != "${FAIL_STEP:-}" ]] || exit 42; if [[ $1 == --list-keys && ${MISSING_KEY:-0} == 1 ]]; then exit 1; fi')
   stub('pacman','echo "pacman $*" >> "$CALLS"; exit "${PACMAN_STATUS:-0}"')
   stub('gpg','echo "pub:::::::::"; echo "fpr:::::::::${FINGERPRINT:-40DFB630FF42BCFFB047046CF0134EE680CAC571}:"')
   const env={...process.env,PATH:bin+':'+process.env.PATH,CALLS:log}
   function run(extra={}) {fs.writeFileSync(log,'');const result=cp.spawnSync('bash',[path.join(root,'bin/omarchy-update-keyring')],{env:{...env,...extra},encoding:'utf8'});return {...result,log:fs.readFileSync(log,'utf8')}}
-  for(const apple of ['0','1']) {
-    const ring=apple==='1'?'archlinuxarm':'archlinux'
+  for(const [apple,asahi] of [['0','0'],['0','1'],['1','0'],['1','1']]) {
+    const rings=apple==='1'?(asahi==='1'?['archlinuxarm','asahi-alarm']:['archlinuxarm']):['archlinux']
+    const ring=rings.join(' '), packages=rings.map(name=>`${name}-keyring`).join(' ')
     for(const missing of ['0','1']) {
-      const r=run({APPLE:apple,MISSING_KEY:missing,MISSING_PACKAGE:missing})
+      const r=run({APPLE:apple,ASAHI_KEYRING:asahi,MISSING_KEY:missing,MISSING_PACKAGE:missing})
       assertEqual(r.status,0,'keyring update succeeds with correct trust inputs')
-      assert(r.log.includes(`pacman -Sy --noconfirm omarchy-keyring ${ring}-keyring`),'both correct keyring packages are refreshed')
-      assert(r.log.includes(`key --populate omarchy ${ring}`),'updated trust and revocations are populated')
+      assert(r.log.includes(`key --populate ${ring}\n`),'installed trust is restored for every platform ring first')
+      assert(r.log.includes(`pacman -Sy --noconfirm omarchy-keyring ${packages}\n`),'every correct keyring package is refreshed')
+      assert(r.log.includes(`key --populate omarchy ${ring}\n`),'updated trust and revocations are populated')
       assertEqual(r.log.includes('--recv-keys'),missing==='1','bootstrap fetch is limited to missing keys')
     }
     for(const extra of [{PACMAN_STATUS:'42'},{FAIL_STEP:`--populate ${ring}`},{FAIL_STEP:`--populate omarchy ${ring}`},{FAIL_STEP:'--lsign-key 40DFB630FF42BCFFB047046CF0134EE680CAC571'},{MISSING_KEY:'1',FAIL_STEP:'--recv-keys 40DFB630FF42BCFFB047046CF0134EE680CAC571 --keyserver keys.openpgp.org'}]) {
-      const r=run({APPLE:apple,...extra});assertEqual(r.status,42,'keyring failures propagate');assert(!r.stdout.includes('Keys are correct'),'failed update never reports success')
+      const r=run({APPLE:apple,ASAHI_KEYRING:asahi,...extra});assertEqual(r.status,42,'keyring failures propagate');assert(!r.stdout.includes('Keys are correct'),'failed update never reports success')
     }
   }
   const wrong=run({FINGERPRINT:'0000000000000000000000000000000000000000'})

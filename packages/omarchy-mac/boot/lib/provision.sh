@@ -6,7 +6,8 @@
 #
 # The entrypoints set MAC_BOOT_ROOT before sourcing: empty on a live system, a
 # fixture root in unprivileged tests. Everything here reads fixed paths below
-# it. Output goes to stderr, which the caller shows or logs.
+# it. Output goes to stderr, which the caller shows or logs; only luks-slots
+# --owner prints its answer on stdout.
 
 BOOT_LUKS_KEY=$MAC_BOOT_ROOT/boot/omarchy/luks-key
 ENCRYPT_STATE=$MAC_BOOT_ROOT/boot/omarchy/encrypt.state
@@ -122,9 +123,10 @@ initramfs_orders_firmware() {
 }
 
 # Phase moves to finished. partition= and luks_uuid= stay as the initramfs
-# wrote them; the owner slot, and a recovery slot the owner acknowledged, come
-# from the re-key journal so later boot checks can prove the header holds
-# exactly those slots. luks-slots records them again whenever they change.
+# wrote them; the owner slot, and a recovery slot an older setup's owner
+# acknowledged, come from the re-key journal so later boot checks can prove the
+# header holds exactly those slots. luks-slots records them again whenever they
+# change.
 write_encrypt_state() {
   local phase=$1 owner_slot recovery_slot value
 
@@ -295,12 +297,33 @@ provision_verify() {
   fi
 }
 
-# luks-slots owner=<slot> [recovery=<slot>]: record the slots of the owner's
-# password and of the recovery key in encrypt.state, whenever setup or a
-# password change leaves them in other slots, so the boot check can prove the
-# header holds exactly those. Without recovery=, the recorded one stays; an
-# empty one records none. Each must be a key slot the root's header holds. A
-# Mac whose disk the image did not encrypt records nothing.
+# luks-slots --owner: print the owner's slot encrypt.state records, once the
+# root's LUKS header proves it holds a key there. Read-only: a password change
+# asks before it changes anything, to refuse a password that opens another
+# slot, such as a recovery key an earlier Mac setup added.
+print_owner_slot() {
+  local owner device slots
+
+  require_apple_silicon
+  require_boot_partition
+  [[ -e $ENCRYPT_STATE ]] || refuse "No owner key slot is recorded: $ENCRYPT_STATE is missing."
+  owner=$(encrypt_state_get owner_slot || true)
+  [[ -n $owner ]] || refuse "No owner key slot is recorded in $ENCRYPT_STATE."
+  [[ $owner =~ ^([0-9]|[12][0-9]|3[01])$ ]] ||
+    refuse "$ENCRYPT_STATE records owner_slot=$owner, which is not a LUKS key slot number."
+  device=$(luks_root_device) || refuse "Could not find the encrypted disk that /etc/crypttab names."
+  slots=$(luks_keyslots "$device") || refuse "Could not read the key slots of $device."
+  grep -Fxq "$owner" <<<"$slots" || refuse "The LUKS header of $device has no key in the recorded owner slot $owner."
+  printf '%s\n' "$owner"
+}
+
+# luks-slots owner=<slot> [recovery=<slot>]: record the slot of the owner's
+# password, and of a recovery key an earlier Mac setup added, in encrypt.state
+# whenever setup or a password change leaves them in other slots, so the boot
+# check can prove the header holds exactly those. Without recovery=, the
+# recorded one stays; an empty one, which owner setup passes, records none.
+# Each must be a key slot the root's header holds. A Mac whose disk the image
+# did not encrypt records nothing.
 record_luks_slots() {
   local arg owner="" recovery="" recovery_given=0 phase device slots slot
 

@@ -265,8 +265,11 @@ for locked, status, expected in ((1, free, None), (0, free, 'the screen is locke
     with mock.patch.object(w.System, 'run', answers(locked, status)):
         assert system.lock_state() == expected, (locked, status)
 with mock.patch.dict(os.environ, {'OMARCHY_PATH': '/usr/share/omarchy'}):
-    for listings, result, kills in ((['[]'], 'none', 0), (['[{}]', '[{}, {}]', '[{}]', '[]'], 'stopped', 3),
-                                    (['[{}]'] * 11, 'failed', 10), ([None], 'unknown', 0), (['{}'], 'unknown', 0)):
+    # What Quickshell 0.3.1 prints for `list -j` when no instance runs.
+    none = 'No running instances for "/usr/share/omarchy/shell/shell.qml"\nUse --all to list all instances.'
+    for listings, result, kills in (([none], 'none', 0), (['[{}]', '[{}, {}]', '[{}]', none], 'stopped', 3),
+                                    (['[]'], 'none', 0), (['[{}]'] * 11, 'failed', 10), ([None], 'unknown', 0),
+                                    (['{}'], 'unknown', 0), (['garbage'], 'unknown', 0)):
         replies = iter(listings)
         calls = []
         def run(self, *args, timeout=10, env=None):
@@ -315,6 +318,8 @@ print('ok - system seams read /proc, logind and the lock state safely')
 unit = (root / 'vendor/systemd/user/omarchy-audio-watchdog.service').read_text()
 assert 'ExecStart=/usr/bin/omarchy-audio-watchdog --watch' in unit and 'PartOf=graphical-session.target' in unit
 assert 'Wants=' not in unit and 'Requires=' not in unit, 'the watchdog never starts audio by itself'
+assert any(line.startswith('After=') and 'graphical-session.target' in line.split('=', 1)[1].split() for line in unit.splitlines()), \
+    'the watchdog starts once the session environment is in the user manager'
 link = root / 'vendor/systemd/user/graphical-session.target.wants/omarchy-audio-watchdog.service'
 assert link.is_symlink() and os.readlink(link) == '../omarchy-audio-watchdog.service'
 with tempfile.TemporaryDirectory() as staged:

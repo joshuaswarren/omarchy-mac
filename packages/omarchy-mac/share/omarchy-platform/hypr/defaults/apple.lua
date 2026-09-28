@@ -1,17 +1,17 @@
 -- omarchy-mac: Apple Silicon Hyprland defaults. Omarchy loads this directory
--- (default/hypr/platform/defaults in the packaged tree) before its own
--- defaults, so a chord bound here replaces Omarchy's default for it, and the
--- user's files, loaded after both, can still unbind or rebind any of it.
+-- (hypr/defaults under /usr/share/omarchy-platform) before its own defaults,
+-- so a chord bound here replaces Omarchy's default for it, and the user's
+-- files, loaded after both, can still unbind or rebind any of it.
 
 if not (o and o.shell_succeeds and o.shell_succeeds("omarchy-hw-apple-silicon")) then
   return
 end
 
--- The built-in trackpad clicks physically; Asahi's disable-while-typing does
--- not stop stray taps, so tap-to-click stays off. The user's input.lua can turn
--- it back on with the same line and tap_to_click = true.
-hl.device({ name = "apple-mtp-multi-touch", tap_to_click = false })
-hl.device({ name = "apple-spi-trackpad", tap_to_click = false })
+-- A runtime older than Omarchy's platform loader has no settings slot, so the
+-- Mac's settings (settings/apple.lua) load from here instead.
+if not package.loaded["default.hypr.platform"] then
+  dofile(debug.getinfo(1, "S").source:match("^@(.+)/defaults/[^/]+$") .. "/settings/apple.lua")
+end
 
 if _G.omarchy_default_bindings ~= false then
   -- The lid switch is "Apple SMC power/lid events" here, so Omarchy's "Lid
@@ -42,13 +42,14 @@ end
 -- that paste into the focused window stay with that window's screen.
 local builtin_keyboards = { "apple-spi-keyboard", "apple-mtp-keyboard" }
 local overlay_prefixes = { "omarchy-menu", "omarchy-shell shell toggle ", "omarchy-shell -q shell togglePanelAt " }
-local pastes_into_focused_window = {
-  ["omarchy-shell shell toggle omarchy.emojis"] = true,
-  ["omarchy-shell shell toggle omarchy.clipboard"] = true,
-}
+local pastes_into_focused_window = { ["omarchy.emojis"] = true, ["omarchy.clipboard"] = true }
 
 local function opens_overlay(command)
-  if type(command) ~= "string" or pastes_into_focused_window[command] then
+  if type(command) ~= "string" then
+    return false
+  end
+  local panel = command:match("^omarchy%-shell shell toggle '?([^' ]+)'?$")
+  if panel and pastes_into_focused_window[panel] then
     return false
   end
   for _, prefix in ipairs(overlay_prefixes) do
@@ -70,8 +71,11 @@ local function focus_builtin_screen()
   end
 end
 
-table.insert(o.bind_decorators, function(keys, dispatcher, opts)
-  if opens_overlay(dispatcher) and not (opts and opts.locked) then
+-- A menu or panel bound as { menu = ... } or { panel = ... } reaches the shell
+-- through its global shortcut, an opaque dispatcher; Omarchy passes the command
+-- it stands for fourth. Older runtimes pass only the dispatcher.
+table.insert(o.bind_decorators, function(keys, dispatcher, opts, command)
+  if opens_overlay(command or dispatcher) and not (opts and opts.locked) then
     hl.bind(keys, focus_builtin_screen, { device = { inclusive = true, list = builtin_keyboards } })
   end
 end)

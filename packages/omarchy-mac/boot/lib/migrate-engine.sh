@@ -1320,8 +1320,8 @@ settle_migrations() {
 # Each repair can run again from its start and fails the step when it cannot
 # finish; a later run repeats it. One that did its work, or found none to do,
 # records its migration as done for every user. The target's runtime carries
-# the leaves they run (install/config/snapper.sh and locale.sh,
-# omarchy-drive-recover) and its omarchy-mac the keyboard handover; a target
+# the leaves they run (install/config/snapper.sh and locale.sh) and its
+# omarchy-mac the keyboard handover; a target
 # without one is reported, and that migration is left to the runtime.
 
 runtime_leaf_present() {
@@ -1463,22 +1463,6 @@ repair_keyboard_mode() {
   repaired_migrations+=(1790327324)
 }
 
-# The password reset with the recovery key (migration 1790380870): owner setup
-# arms it wherever it gives the disk a recovery key, so every encrypted Mac
-# gets it. A disk without one never arms a reset: the check looks for a
-# recovery key among what was typed at the disk prompt.
-repair_drive_recover() {
-  if [[ -n $(<"$plan/luks") ]]; then
-    if ! command -v omarchy-drive-recover >/dev/null; then
-      say "This Omarchy has no omarchy-drive-recover: the password reset was not armed"
-      return 0
-    fi
-    env OMARCHY_PATH="$R/usr/share/omarchy" OMARCHY_SYSTEMD_UNIT_DIR="$R/etc/systemd/system" omarchy-drive-recover --arm >/dev/null ||
-      die "cannot arm the password reset with the recovery key"
-  fi
-  repaired_migrations+=(1790380870)
-}
-
 repair_system() {
   local output
   repaired_migrations=()
@@ -1487,7 +1471,6 @@ repair_system() {
   repair_broadcom_block
   repair_locale
   repair_keyboard_mode
-  repair_drive_recover
   # The Broadcom and keyboard repairs can rebuild the UKI.
   output=$(boot_check_pending linux-aurora 2>&1) || die "the boot files do not check after the repairs: $(tail -n 1 <<<"$output")"
   printf '%s\n' "${repaired_migrations[@]}" | durable_write "$repaired" || die "cannot record the repairs made"
