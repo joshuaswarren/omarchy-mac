@@ -1,11 +1,10 @@
 # Apple Silicon additions, composed after omarchy-base.packages and
 # omarchy-aarch64.packages (omarchy-pkg-defaults apple-silicon); never on Intel
 # Macs or other aarch64 machines. The kernel and boot chain come with the
-# Mac's image, as the kernel and bootloader do from the ISO on x86_64. What
-# every Mac needs (the speaker stack, audio routing, the GPU's Vulkan driver)
-# comes as omarchy-mac's and omarchy-mac-boot's dependencies, so an image's
-# first boot, often offline, has it without the network. The rest are defaults
-# an owner may remove.
+# Mac's image, as the kernel and bootloader do from the ISO on x86_64. What a
+# Mac cannot work without (its speaker stack, audio server and GPU driver)
+# comes as omarchy-mac's dependencies, so a new Mac driver needs no change
+# here; the rest are defaults an owner may remove.
 
 # The Mac's runtime and boot packages (omacom/omarchy-mac).
 omarchy-mac
