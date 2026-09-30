@@ -211,6 +211,15 @@ expect_verified "a Mac with linux-aurora-wip after linux-aurora"
 grep -Fq "running linux-aurora $mac_kver; installed boot files match" "$tmp/out" || fail "update-verify checks linux-aurora beside linux-aurora-wip" "$(cat "$tmp/out")"
 verify "$wip_release"
 expect_verified "a Mac booted into linux-aurora-wip"
+set +e
+(
+  eval "$(limine_mac_env "$ROOT/bin" "$wip_release")"
+  bash "$ROOT/bin/omarchy-apple-silicon-boot-check"
+) >"$tmp/full-out" 2>"$tmp/full-err"
+full_status=$?
+set -e
+(( full_status == 1 )) && grep -Fq "running linux-aurora-wip $wip_release, not linux-aurora $mac_kver, which the boot menu starts first" "$tmp/full-err" ||
+  fail "the full boot check names linux-aurora-wip as the running kernel" "status $full_status: $(cat "$tmp/full-err")"
 limine_mac
 wip_kernel
 {

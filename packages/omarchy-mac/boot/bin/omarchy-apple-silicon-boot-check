@@ -160,6 +160,11 @@ if [[ $running_kver != "$kver" ]]; then
   if [[ ${OMARCHY_BOOT_CHECK_ALLOW_PENDING_REBOOT:-0} == "1" ]]; then
     pending_reboot=1
   else
+    # Another installed kernel, such as linux-aurora-wip picked in the menu.
+    running_pkgbase=""
+    [[ $running_kver == */* ]] || running_pkgbase=$(cat "$(path "/usr/lib/modules/$running_kver/pkgbase")" 2>/dev/null || true)
+    [[ -z $running_pkgbase || $running_pkgbase == "$kernel" ]] ||
+      fail "running $running_pkgbase $running_kver, not $kernel $kver, which the boot menu starts first; boot $kernel to check its boot files"
     fail "running kernel is $running_kver, not the installed $kernel $kver"
   fi
 fi
