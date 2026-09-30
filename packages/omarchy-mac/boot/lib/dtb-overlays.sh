@@ -8,9 +8,12 @@
 # tree takes its overlays in C order of PREFIX/NAME. An overlay whose root node
 # has the string list "omarchy,skip-if-compatible" is left out of a device tree
 # that already has a node with one of those compatibles, so a kernel that gains
-# the node wins. When an overlay does not apply, or dtc cannot read the result,
-# that device tree stays as the kernel shipped it. With no overlays, nothing
-# changes.
+# the node wins. An overlay whose root node has the string "omarchy,opt-in"
+# applies only when that string is a line of
+# /etc/omarchy-platform/dtb-overlays.opt-in: the owner's choice for hardware
+# whose driver must not start by default. When an overlay does not apply, or
+# dtc cannot read the result, that device tree stays as the kernel shipped it.
+# With no overlays, nothing changes.
 #
 # /etc/default/update-m1n1 calls dtb_overlays_update_m1n1 to set DTBS, and
 # omarchy-apple-silicon-boot-check calls dtb_overlays_apply to rebuild the same
@@ -66,7 +69,8 @@ dtb_overlays_has_compatible() {
 # Writes OUT: DTB with every overlay in OVERLAYS (newline-separated) that
 # applies to it. Returns 1, and writes nothing, when none applies or one fails.
 dtb_overlays_build() {
-  local dtb="$1" out="$2" overlays="$3" name="${1##*/}" applied=0 overlay prefix skip compatible
+  local dtb="$1" out="$2" overlays="$3" name="${1##*/}" applied=0 overlay prefix skip compatible key
+  local opt_in="${OMARCHY_DTB_OVERLAYS_ROOT:-}/etc/omarchy-platform/dtb-overlays.opt-in"
   cp -- "$dtb" "$out.base" || return 1
   for overlay in $overlays; do
     prefix=${overlay%/*}
@@ -76,6 +80,9 @@ dtb_overlays_build() {
       *) continue ;;
     esac
     skip=0
+    for key in $(fdtget -t s "$overlay" / omarchy,opt-in 2>/dev/null); do
+      grep -Fqx -- "$key" "$opt_in" 2>/dev/null || skip=1
+    done
     for compatible in $(fdtget -t s "$overlay" / omarchy,skip-if-compatible 2>/dev/null); do
       if dtb_overlays_has_compatible "$out.base" "$compatible"; then
         skip=1
