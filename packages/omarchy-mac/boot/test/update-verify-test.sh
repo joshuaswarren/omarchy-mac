@@ -187,6 +187,47 @@ verify
 expect_refused "a package pacman cannot check, on a fresh image" "installed linux-aurora files do not match the package mtree: error: linux-aurora: could not read the mtree"
 pass "update-verify still refuses a drifted kernel image, device tree or m1n1, or a package pacman cannot check, and checks the kernel the menu starts"
 
+# linux-aurora-wip installs beside linux-aurora for testers to pick in the
+# menu: its own release (never -ARCH, so update-m1n1 keeps linux-aurora's
+# device trees in m1n1 stage 2) and its own entry, after linux-aurora's.
+wip_release=6.17.0-2.r1453145.gfe6d813-1-aurora-wip
+wip_kernel() {
+  local modules=$mac_root/usr/lib/modules/${1:-$wip_release} dtb
+  mkdir -p "$modules/dtbs"
+  printf 'linux-aurora-wip kernel\n' >"$modules/vmlinuz"
+  printf 'linux-aurora-wip\n' >"$modules/pkgbase"
+  for dtb in "${mac_dtbs[@]}"; do
+    limine_mac_dtb "$modules/dtbs/${dtb##*/}" "from aurora-wip"
+  done
+  printf '%s\n' linux-aurora-wip linux-aurora-wip-headers >>"$mac_state/installed"
+  printf '  //linux-aurora-wip\n    protocol: efi\n    path: boot():/EFI/Linux/omarchy_linux-aurora-wip.efi#0\n    cmdline: quiet\n' >>"$mac_esp/limine.conf"
+}
+limine_mac
+wip_kernel
+full_check
+(( full_status == 0 )) || fail "the full boot check passes a Mac with linux-aurora-wip installed" "$(cat "$tmp/full-err")"
+verify
+expect_verified "a Mac with linux-aurora-wip after linux-aurora"
+grep -Fq "running linux-aurora $mac_kver; installed boot files match" "$tmp/out" || fail "update-verify checks linux-aurora beside linux-aurora-wip" "$(cat "$tmp/out")"
+verify "$wip_release"
+expect_verified "a Mac booted into linux-aurora-wip"
+limine_mac
+wip_kernel
+{
+  printf '/+Omarchy\n  //linux-aurora-wip\n    protocol: efi\n    path: boot():/EFI/Linux/omarchy_linux-aurora-wip.efi#0\n    cmdline: quiet\n'
+  sed '1d; /\/\/linux-aurora-wip$/,$d' "$mac_esp/limine.conf"
+} >"$tmp/limine.conf"
+cp "$tmp/limine.conf" "$mac_esp/limine.conf"
+verify
+expect_refused "a menu that starts linux-aurora-wip first" "/boot/efi/limine.conf starts linux-aurora-wip first, not linux-aurora"
+# A wip release ending in -ARCH and sorting above linux-aurora's would put its
+# device trees in m1n1 stage 2 on the next update-m1n1.
+limine_mac
+wip_kernel 6.17.1-aurora1-ARCH
+verify
+expect_refused "a second kernel whose release update-m1n1 takes device trees from" "is not one of linux-aurora $mac_kver's"
+pass "update-verify checks linux-aurora beside linux-aurora-wip, and refuses a menu that starts wip first or a stage built from wip's device trees"
+
 limine_mac
 limine_mac_luks
 printf 'usr/lib/modules/%s/kernel/x.ko\nusr/bin/init\n' "$mac_kver" >"$mac_state/initramfs"

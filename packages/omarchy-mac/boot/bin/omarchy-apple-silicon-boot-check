@@ -360,6 +360,12 @@ if (( limine_mac )); then
   limine_efi=$(path /usr/share/limine/BOOTAA64.EFI)
   sudo test -f "$limine_uki" || fail "$limine_esp/EFI/Linux/omarchy_$kernel.efi (the Limine UKI) is missing"
   sudo test -f "$limine_cfg" || fail "$limine_esp/limine.conf is missing on a Limine Mac"
+  # The menu starts its first kernel entry. Another kernel there, such as
+  # linux-aurora-wip put ahead by a BOOT_ORDER edit, would boot instead of the
+  # one checked here.
+  first_kernel=$(sudo awk '{ sub(/^[[:space:]]+/, "") } /^\/\/[^\/]/ { print substr($0, 3); exit }' "$limine_cfg")
+  [[ $first_kernel == "$kernel" ]] ||
+    fail "$limine_esp/limine.conf starts ${first_kernel:-no kernel} first, not $kernel; put $kernel first in BOOT_ORDER in /etc/default/limine, then run sudo omarchy-mac-boot-update"
   sudo grep -Fq "/EFI/Linux/omarchy_$kernel.efi" "$limine_cfg" ||
     fail "$limine_esp/limine.conf does not boot the $kernel UKI"
   sudo cmp -s "$limine_efi" "$(path "$limine_esp/EFI/BOOT/BOOTAA64.EFI")" ||
