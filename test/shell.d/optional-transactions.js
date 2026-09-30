@@ -24,6 +24,8 @@ const aurOnly = new Set(items.filter(item => (item.when || '').startsWith('[[ $(
 // These recipes each have one package transaction. Stop at that request,
 // before any configuration writes, driver changes or application launch.
 // An empty PATH makes unmocked commands fail instead of reaching the host.
+// A guard's platform check answers yes: this compares packages, and
+// apple-silicon-quirks-test.sh pins which rows ask for a platform.
 const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'omarchy-menu-transactions-'))
 process.on('exit', () => fs.rmSync(sandbox, { recursive: true, force: true }))
 const dynamicRecipes = new Set(['omarchy-install-preinstalls', 'omarchy-install-gaming-steam'])
@@ -32,6 +34,7 @@ function probe(mode, value, platform, missing = '') {
     uname() { [[ $1 == "-m" ]] && printf '%s\n' "$TEST_ARCH"; }
     gum() { [[ $1 == "confirm" ]]; }
     omarchy-refresh-applications() { :; }
+    omarchy-hw-apple-silicon() { :; }
     omarchy-pkg-add() { printf '%s\n' "$@" >&3; exit 0; }
     omarchy-pkg-available() {
       local package

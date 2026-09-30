@@ -26,6 +26,9 @@ try {
     + ['core', 'extra', 'omarchy'].map(repo => `[${repo}]\nServer = file://${tmp}/mirror/${repo}\n`).join(''))
   for (const tool of ['pacman', 'pacman-conf'])
     fs.writeFileSync(path.join(bin, tool), `#!/bin/bash\nexec /usr/bin/${tool} --config "$PACMAN_TEST_CONF" "$@"\n`, {mode: 0o755})
+  // Answer as a Mac, so a row that also asks for its platform (Local AI)
+  // shows wherever its packages do; this test is about the databases.
+  fs.writeFileSync(path.join(bin, 'omarchy-hw-apple-silicon'), '#!/bin/bash\nexit 0\n', {mode: 0o755})
 
   // A sync database is a gzipped tar of one <name>-<version>/desc per package.
   function database(repo, names) {

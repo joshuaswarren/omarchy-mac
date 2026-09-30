@@ -89,5 +89,8 @@ const items = menu.parseMenuJsonc(fs.readFileSync(path.join(root, 'default/omarc
 const when = id => (items.find(entry => entry.id === id) || {}).when
 assertEqual(when('install.windows'), '[[ $(uname -m) == "x86_64" ]]', 'install.windows is offered on x86_64 only')
 assertEqual(when('setup.direct-boot'), '! omarchy-hw-apple-silicon', 'setup.direct-boot is hidden on Apple Silicon only')
+// omarchy-mac-ml shares the aarch64 repository a Snapdragon syncs too, so its
+// availability alone would list the row there.
+assertEqual(when('install.ai.local'), 'omarchy-pkg-available omarchy-mac-ml && omarchy-hw-apple-silicon', 'install.ai.local is offered on Apple Silicon only, where omarchy-mac-ml is')
 JS
-pass "the menu offers Windows on x86_64 only and hides Direct Boot on Apple Silicon only"
+pass "the menu offers Windows on x86_64 only, and hides Direct Boot and offers Local AI on Apple Silicon only"
