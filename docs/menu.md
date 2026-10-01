@@ -110,7 +110,7 @@ architecture then removes the row instead of failing halfway through a
 transaction. `optional-transactions-*-test.sh` derives each row's packages from
 its install command and fails when the guard names different ones.
 
-A row for one platform's package also asks for that platform, because the package shares its repository with every machine of the same CPU (see [platform-guard.md](platform-guard.md)). The MLX row's `when:` is `omarchy-pkg-available omarchy-mac-ml && omarchy-hw-apple-silicon`: a Snapdragon syncs the same aarch64 repository, and a fresh x86_64 install counts every package as available until its first update (below), so neither lists the row.
+A row for one platform's package also asks for that platform, because the package shares its repository with every machine of the same CPU (see [platform-guard.md](platform-guard.md)). The `install.ai.mlx` row's `when:` is `omarchy-pkg-available omarchy-mac-ml && omarchy-hw-apple-silicon`: a Snapdragon syncs the same aarch64 repository, and a fresh x86_64 install counts every package as available until its first update (below), so neither lists the row.
 
 The sync databases can only say a package is missing when every repository
 `pacman-conf --repo-list` names has its database in the DBPath's `sync/`.

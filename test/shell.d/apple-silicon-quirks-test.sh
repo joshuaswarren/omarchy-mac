@@ -93,4 +93,4 @@ assertEqual(when('setup.direct-boot'), '! omarchy-hw-apple-silicon', 'setup.dire
 // availability alone would list the row there.
 assertEqual(when('install.ai.mlx'), 'omarchy-pkg-available omarchy-mac-ml && omarchy-hw-apple-silicon', 'install.ai.mlx is offered on Apple Silicon only, where omarchy-mac-ml is')
 JS
-pass "the menu offers Windows on x86_64 only, and hides Direct Boot and offers MLX for Apple Silicon on Apple Silicon only"
+pass "the menu offers Windows on x86_64 only, and hides Direct Boot and offers MLX + Core ML (Apple Silicon) on Apple Silicon only"
