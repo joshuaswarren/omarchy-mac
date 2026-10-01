@@ -186,6 +186,7 @@ while (( $# )); do
 done
 led="$OMARCHY_LEDS_DIR/$device"
 if (( restore )); then
+  [[ ${RESTORE_FAILS:-0} == 0 ]] || exit 1
   cp "$led/saved" "$led/brightness"
   exit 0
 fi
@@ -300,6 +301,53 @@ keys off
 tick
 (( $(led) == 226 )) || fail "a level auto changed forgets the earlier key press" "got $(led)"
 pass "any level auto sets forgets an earlier key press"
+
+# A firmware Fn key (ThinkPad and Framework Fn+Space, Dell Fn+F10) writes the
+# LED directly, past omarchy-brightness-keyboard. Its off is a choice as much as
+# the keys' is.
+lux 26
+tick
+tick
+(( $(led) == 226 )) || fail "a dark room lights the keys before the Fn key" "got $(led)"
+printf '0\n' >"$loop/leds/kbd_backlight/brightness"
+for _ in 1 2 3; do tick; done
+(( $(led) == 0 )) || fail "keys turned off with a firmware key stay off" "got $(led)"
+lux 150
+tick
+(( $(led) == 43 )) || fail "a firmware off resumes once the room changes enough" "got $(led)"
+pass "keys turned off with a firmware key stay off until the room changes enough"
+
+# A wake whose restore fails leaves the keys blank, and still recorded as the
+# lock's blank, so auto takes them back.
+lux 26
+tick
+tick
+(( $(led) == 226 )) || fail "a dark room lights the keys before the lock" "got $(led)"
+keys off
+LOCKED=1 tick
+RESTORE_FAILS=1 keys restore && fail "a failed restore reports failure"
+tick
+(( $(led) == 226 )) || fail "keys a failed restore left blank light up again" "got $(led)"
+pass "keys a failed wake restore left blank light up again"
+
+# A lock blank auto takes back without moving the LED (a bright room, where it
+# wants them off anyway) is spent: a later firmware off is still a choice.
+lux 400
+tick
+(( $(led) == 0 )) || fail "a bright room turns the keys off before the lock" "got $(led)"
+printf '226\n' >"$loop/leds/kbd_backlight/brightness"
+tick
+keys off
+LOCKED=1 tick
+lux 180
+tick
+printf '255\n' >"$loop/leds/kbd_backlight/brightness"
+tick
+lux 150
+printf '0\n' >"$loop/leds/kbd_backlight/brightness"
+for _ in 1 2; do tick; done
+(( $(led) == 0 )) || fail "a firmware off after a spent lock blank stays off" "got $(led)"
+pass "a lock blank auto already took back never stands in for a later firmware off"
 
 # Without a session runtime directory the keys record their level in a private
 # state directory they create, never under a fixed name in /tmp.
