@@ -2,7 +2,7 @@
 # Package-owned device tree overlays for m1n1 stage 2 (sh with local).
 #
 # A package that adds hardware support the kernel's device trees lack ships a
-# compiled overlay as /usr/lib/omarchy-platform/dtb-overlays/PREFIX/NAME.dtbo.
+# compiled overlay as /usr/share/omarchy-platform/dtb-overlays/PREFIX/NAME.dtbo.
 # It applies to every device tree whose file name is PREFIX.dtb or starts with
 # PREFIX- ("t8103" covers every M1 board, "t6001-j316c" one board). A device
 # tree takes its overlays in C order of PREFIX/NAME. An overlay whose root node
@@ -23,7 +23,7 @@
 # boot check's root).
 
 dtb_overlays_dir() {
-  printf '%s\n' "${OMARCHY_DTB_OVERLAYS_ROOT:-}/usr/lib/omarchy-platform/dtb-overlays"
+  printf '%s\n' "${OMARCHY_DTB_OVERLAYS_ROOT:-}/usr/share/omarchy-platform/dtb-overlays"
 }
 
 # The overlays, one path per line, in the order they apply.

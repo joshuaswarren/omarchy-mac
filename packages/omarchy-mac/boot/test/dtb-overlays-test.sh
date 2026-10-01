@@ -17,7 +17,7 @@ root=$tmp/root
 export OMARCHY_DTB_OVERLAYS_ROOT=$root
 kver=7.1.12-2-11-ARCH
 dtbs=$root/lib/modules/$kver/dtbs
-overlays=$root/usr/lib/omarchy-platform/dtb-overlays
+overlays=$root/usr/share/omarchy-platform/dtb-overlays
 mkdir -p "$dtbs" "$overlays" "$root/usr/bin" "$root/run" "$tmp/out"
 
 # A board device tree: its board and SoC compatibles and one /soc node.

@@ -6,7 +6,7 @@ Type = Path
 Operation = Install
 Operation = Upgrade
 Operation = Remove
-Target = usr/lib/omarchy-platform/dtb-overlays/*
+Target = usr/share/omarchy-platform/dtb-overlays/*
 
 [Action]
 Description = Updating m1n1 image for device tree overlays...

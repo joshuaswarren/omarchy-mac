@@ -542,9 +542,9 @@ pass "a stale kernel, initramfs, GRUB entry or m1n1 image, disabled m1n1 updates
 # A package-owned overlay: update-m1n1 applies it to the kernel's device trees
 # (dtb-overlays.sh), and the rebuild applies it the same way.
 system linux-aurora
-mkdir -p "$root/usr/lib/omarchy-platform/dtb-overlays/t8103"
-printf 'overlay\n' >"$root/usr/lib/omarchy-platform/dtb-overlays/t8103/omarchy-ane.dtbo"
-printf '/usr/lib/omarchy-platform/dtb-overlays/t8103/omarchy-ane.dtbo omarchy-ane\n' >"$test_tmp/files/owners"
+mkdir -p "$root/usr/share/omarchy-platform/dtb-overlays/t8103"
+printf 'overlay\n' >"$root/usr/share/omarchy-platform/dtb-overlays/t8103/omarchy-ane.dtbo"
+printf '/usr/share/omarchy-platform/dtb-overlays/t8103/omarchy-ane.dtbo omarchy-ane\n' >"$test_tmp/files/owners"
 run_check --boot-chain
 expect_fail "an overlay update-m1n1 has not applied yet" "m1n1/boot.bin on the system ESP (/boot/efi) is not m1n1"
 overlaid="$test_tmp/t8103-j274.dtb"
@@ -567,7 +567,7 @@ expect_pass "an m1n1 image with the overlaid device tree, in the full check"
 [[ -z $(ls -A "$root/run") ]] || fail "the rebuild writes the overlaid device tree only to its own work directory"
 : >"$test_tmp/files/owners"
 run_check --boot-chain
-expect_fail "an overlay no package owns" "device tree overlay /usr/lib/omarchy-platform/dtb-overlays/t8103/omarchy-ane.dtbo is not owned by a package"
+expect_fail "an overlay no package owns" "device tree overlay /usr/share/omarchy-platform/dtb-overlays/t8103/omarchy-ane.dtbo is not owned by a package"
 pass "package-owned device tree overlays are rebuilt into m1n1 stage 2, and an unowned one fails"
 
 # update-m1n1's defaults: := fills unset and empty settings alike.
