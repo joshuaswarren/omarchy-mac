@@ -45,7 +45,7 @@ args=("\$@")
 case \${args[0]} in
   list-keymaps)
     [[ \$("$stub_bin/next-mode" "$tmp/list-modes") == normal ]] || { echo "Failed to connect to bus" >&2; exit 1; }
-    printf '%s\n' de-latin1 dk fr us
+    printf '%s\n' bg-cp1251 colemak cz de-latin1 dk fr pl ua us
     ;;
   set-keymap)
     echo "localectl set-keymap \${args[1]}" >>"$tmp/calls"
@@ -70,7 +70,7 @@ SH
 chmod +x "$stub_bin"/*
 export PATH="$stub_bin:$PATH"
 
-sed -n '/^keyboard_form() {/,/^}/p; /^apply_keyboard() {/,/^}/p' "$ROOT/bin/omarchy-provision-owner" |
+sed -n '/^keyboard_form() {/,/^}/p; /^keyboard_xkb_settings() {/,/^}/p; /^apply_keyboard() {/,/^}/p' "$ROOT/bin/omarchy-provision-owner" |
   sed "s|/etc/|$root/etc/|g" >"$tmp/keyboard.sh"
 grep -q '^keyboard_form() {' "$tmp/keyboard.sh" && grep -q '^apply_keyboard() {' "$tmp/keyboard.sh" ||
   fail "omarchy-provision-owner defines the keyboard step"
@@ -144,6 +144,62 @@ grep -qx 'loadkeys dk' "$tmp/calls" && grep -qx 'systemd-firstboot --keymap=dk -
   fail "the layout is loaded on the console and persisted" "$(cat "$tmp/calls")"
 assert_layout dk "a known layout"
 pass "a layout that loads, persists and reads back goes straight to the password form"
+
+# systemd-firstboot writes only KEYMAP= for a keymap kbd-model-map lacks, as it
+# does for Polish, Ukrainian and Colemak. Setup supplies the XKB layout.
+fresh_root
+answers 'Polish|pl'
+echo no-xkb >"$tmp/firstboot-modes"
+form || fail "a keymap firstboot has no XKB layout for is set" "$(cat "$tmp/screen" "$tmp/log")"
+[[ $(prompts) == 1 ]] && ! grep -q '^notice' "$tmp/screen" || fail "Polish is asked for once" "$(cat "$tmp/screen")"
+grep -qx 'XKBLAYOUT=pl' "$conf" || fail "Polish gets the pl XKB layout" "$(cat "$conf")"
+
+fresh_root
+answers 'Ukrainian|ua'
+echo no-xkb >"$tmp/firstboot-modes"
+form || fail "Ukrainian is set" "$(cat "$tmp/screen" "$tmp/log")"
+grep -qx 'KEYMAP=ua' "$conf" && grep -qx 'XKBLAYOUT=ua,us' "$conf" &&
+  grep -qx 'XKBOPTIONS=terminate:ctrl_alt_bksp,grp:shifts_toggle,grp_led:scroll' "$conf" ||
+  fail "a non-Latin layout keeps a US layout to switch to" "$(cat "$conf")"
+
+fresh_root
+answers 'English (US, Colemak)|colemak'
+echo no-xkb >"$tmp/firstboot-modes"
+form || fail "Colemak is set" "$(cat "$tmp/screen" "$tmp/log")"
+grep -qx 'XKBLAYOUT=us' "$conf" && grep -qx 'XKBVARIANT=colemak' "$conf" ||
+  fail "Colemak is the us layout's colemak variant" "$(cat "$conf")"
+# The desktop must type what the console does, or the shared password differs:
+# kbd's cz is QWERTY and bg-cp1251 phonetic, unlike XKB's defaults.
+fresh_root
+answers 'Czech|cz'
+echo no-xkb >"$tmp/firstboot-modes"
+form || fail "Czech is set" "$(cat "$tmp/screen" "$tmp/log")"
+grep -qx 'XKBLAYOUT=cz,us' "$conf" && grep -qx 'XKBVARIANT=qwerty,' "$conf" ||
+  fail "Czech is QWERTY on the desktop as on the console" "$(cat "$conf")"
+
+fresh_root
+answers 'Bulgarian|bg-cp1251'
+echo no-xkb >"$tmp/firstboot-modes"
+form || fail "Bulgarian is set" "$(cat "$tmp/screen" "$tmp/log")"
+grep -qx 'XKBLAYOUT=bg,us' "$conf" && grep -qx 'XKBVARIANT=phonetic,' "$conf" ||
+  fail "Bulgarian is phonetic on the desktop as on the console" "$(cat "$conf")"
+pass "a keymap systemd-firstboot has no XKB layout for gets one from setup"
+
+# Every layout the form offers must end with an XKB layout: kbd-model-map's, or
+# setup's own. A keymap in neither could never finish the keyboard step.
+model_map=/usr/share/systemd/kbd-model-map
+if [[ -r $model_map ]]; then
+  source "$ROOT/install/provisioning/setup-form.sh"
+  source "$tmp/keyboard.sh"
+  while IFS='|' read -r label keymap; do
+    awk -v k="$keymap" '$1 == k { found = 1 } END { exit !found }' "$model_map" ||
+      { declare -F keyboard_xkb_settings >/dev/null && keyboard_xkb_settings "$keymap" >/dev/null; } ||
+      fail "the $label layout ($keymap) gets an XKB layout"
+  done <<<"$OMARCHY_KEYBOARD_LAYOUTS"
+  pass "every layout the form offers gets an XKB layout"
+else
+  echo "ok - # SKIP no $model_map to check the form's layouts against"
+fi
 
 fresh_root
 answers 'Danish|dk' 'Danish|dk'
