@@ -286,22 +286,21 @@ assert(
 assert(!defaultById['install.ai.crush'], 'menu removes Crush from Install > AI')
 // Software you already have keeps its place in Install, dimmed rather than
 // dropped, so the list reads as a catalog of what Omarchy can install.
-// An Install row may hide for one reason other than the software already
-// being there: no package for this architecture at all, which is what the
-// explicit package or architecture guard asks. Chromium Account is the sole
-// Install row with anything else left to hide for, so any other `when:` here
-// is a row that went back to vanishing once installed.
-const availabilityGuard = when => typeof when === 'string' && (when.startsWith('omarchy-pkg-available ') || when.startsWith('[[ $(uname -m)'))
+// Chromium Account is the sole Install row with anything left to hide for, and
+// the Windows VM only hides off x86_64, where its guest can't run, so any other
+// `when:` here is a row that went back to vanishing once installed.
+const windowsGuard = '[[ $(uname -m) == "x86_64" ]]'
 assertDeepEqual(
   defaultItems
-    .filter(item => item.id.startsWith('install.') && item.action && item.when && !availabilityGuard(item.when))
+    .filter(item => item.id.startsWith('install.') && item.action && item.when)
     .map(item => item.id),
-  ['install.service.chromium-account'],
+  ['install.windows', 'install.service.chromium-account'],
   'menu never hides an Install row because the software is already there'
 )
+assertEqual(defaultById['install.windows'].when, windowsGuard, 'menu hides the Windows VM only off x86_64')
 assert(
   ['install.browser.zen', 'install.editor.vscode', 'install.gaming.steam', 'install.development.rust', 'install.windows'].every(
-    id => defaultById[id].disabled && (!defaultById[id].when || availabilityGuard(defaultById[id].when))
+    id => defaultById[id].disabled && (!defaultById[id].when || defaultById[id].when === windowsGuard)
   ),
   'menu dims the Install rows for software that is already installed'
 )
