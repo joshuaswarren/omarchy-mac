@@ -1,2 +1,0 @@
-# Arch Linux ARM publishes this endpoint with a $arch/$repo layout.
-Server = http://mirror.archlinuxarm.org/$arch/$repo

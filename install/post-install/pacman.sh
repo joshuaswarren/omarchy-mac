@@ -13,8 +13,12 @@ if [[ $platform == "qualcomm" || $platform == "generic-aarch64" ]]; then
   omarchy-pkg-add archlinuxarm-keyring
 fi
 
-cp -f "$templates/pacman-${OMARCHY_MIRROR:-stable}.conf" /etc/pacman.conf
-cp -f "$templates/mirrorlist-${OMARCHY_MIRROR:-stable}" /etc/pacman.d/mirrorlist
+# An install built for a channel this platform has no templates for (stable or
+# rc on aarch64) gets the platform's default channel instead.
+channel=${OMARCHY_MIRROR:-}
+[[ -n $channel && -f $templates/pacman-$channel.conf ]] || channel=$(omarchy_pacman_default_channel "$platform")
+cp -f "$templates/pacman-$channel.conf" /etc/pacman.conf
+cp -f "$templates/mirrorlist-$channel" /etc/pacman.d/mirrorlist
 
 # An image build leaves the keyring to each machine's first boot, so no two
 # share a master key (install/helpers/image-target.sh).

@@ -16,6 +16,11 @@ export OMARCHY_PATH="$ROOT"
 source "$ROOT/install/helpers/pacman.sh"
 
 platforms="generic qualcomm generic-aarch64 apple-silicon"
+# aarch64 has edge alone: stable and rc there would install the release line,
+# which has no aarch64 support.
+channels_for() {
+  if [[ $1 == "generic" ]]; then echo "stable rc edge"; else echo "edge"; fi
+}
 
 # ── the templates ────────────────────────────────────────────────────────────
 
@@ -26,6 +31,13 @@ platforms="generic qualcomm generic-aarch64 apple-silicon"
 ! omarchy_pacman_templates riscv 2>/dev/null || fail "an unknown platform has no templates"
 pass "each platform's templates sit in a directory of their own, x86_64's where they always were"
 
+[[ $(omarchy_pacman_default_channel generic) == stable ]] || fail "x86 defaults to stable"
+for platform in qualcomm generic-aarch64 apple-silicon; do
+  [[ $(omarchy_pacman_default_channel "$platform") == edge ]] || fail "$platform defaults to edge"
+done
+! omarchy_pacman_default_channel riscv 2>/dev/null || fail "an unknown platform has no default channel"
+pass "x86 defaults to stable and every aarch64 platform to edge"
+
 # pacman reads each repository list from the template, with its mirrorlist
 # standing in for /etc/pacman.d/mirrorlist.
 repos() {
@@ -35,7 +47,12 @@ repos() {
 }
 for platform in $platforms; do
   templates=$(omarchy_pacman_templates "$platform")
-  for channel in stable rc edge; do
+  for channel in stable rc; do
+    [[ $platform == "generic" ]] && continue
+    [[ ! -e $templates/pacman-$channel.conf && ! -e $templates/mirrorlist-$channel ]] ||
+      fail "$platform has no $channel template or mirrorlist"
+  done
+  for channel in $(channels_for "$platform"); do
     [[ -f $templates/pacman-$channel.conf && -f $templates/mirrorlist-$channel ]] ||
       fail "$platform has a $channel template and mirrorlist"
     list=$(repos "$templates" "$channel") || fail "$platform $channel: pacman reads the template"
@@ -47,14 +64,11 @@ for platform in $platforms; do
     [[ $list == "$expected" ]] || fail "$platform $channel: repositories in order" "$list"
     # $arch stays literal: pacman fills it in on the machine.
     server=$(sed -n '/^\[omarchy\]/,/^\[/s/^Server = //p' "$templates/pacman-$channel.conf")
-    # aarch64 packages are published on edge alone so far.
-    omarchy_channel=$channel
-    [[ $platform == "generic" ]] || omarchy_channel=edge
-    [[ $server == "https://pkgs.omarchy.org/$omarchy_channel/\$arch" ]] ||
-      fail "$platform $channel: Omarchy's $omarchy_channel repository" "$server"
+    [[ $server == "https://pkgs.omarchy.org/$channel/\$arch" ]] ||
+      fail "$platform $channel: Omarchy's $channel repository" "$server"
   done
 done
-pass "every platform has a template and mirrorlist for every channel, with its repositories in order"
+pass "x86 has templates for stable, rc and edge and aarch64 for edge alone, each with its repositories in order"
 
 # ── install finalization ─────────────────────────────────────────────────────
 
@@ -76,17 +90,21 @@ if (( EUID == 0 )); then
 else
 for platform in $platforms; do
   templates=$(omarchy_pacman_templates "$platform")
-  for channel in stable rc edge; do
+  # An install built for a channel the platform has no templates for, or for
+  # none, gets the platform's default channel.
+  for channel in stable rc edge ""; do
+    expected=$channel
+    [[ -n $expected && -f $templates/pacman-$expected.conf ]] || expected=$(omarchy_pacman_default_channel "$platform")
     rm -rf "$work/etc"
     mkdir -p "$work/etc/pacman.d"
     printf 'offline\n' | tee "$work/etc/pacman.conf" >"$work/etc/pacman.d/mirrorlist"
     OMARCHY_IMAGE_ROOT=$work OMARCHY_MIRROR=$channel PLATFORM=$platform OMARCHY_INSTALL="$work/install" PATH="$finalize_bin:$PATH" \
-      bash -e -c 'source "$1"' bash "$work/finalize.sh" >/dev/null || fail "$platform finalization on $channel"
-    cmp -s "$work/etc/pacman.conf" "$templates/pacman-$channel.conf" || fail "$platform $channel: finalization copies the template"
-    cmp -s "$work/etc/pacman.d/mirrorlist" "$templates/mirrorlist-$channel" || fail "$platform $channel: finalization copies the mirrorlist"
+      bash -e -c 'source "$1"' bash "$work/finalize.sh" >/dev/null || fail "$platform finalization on '$channel'"
+    cmp -s "$work/etc/pacman.conf" "$templates/pacman-$expected.conf" || fail "$platform '$channel': finalization copies the $expected template"
+    cmp -s "$work/etc/pacman.d/mirrorlist" "$templates/mirrorlist-$expected" || fail "$platform '$channel': finalization copies the $expected mirrorlist"
   done
 done
-pass "install finalization copies the platform's channel template and mirrorlist"
+pass "install finalization copies the platform's channel template and mirrorlist, or its default channel's when it has none for that channel"
 fi
 
 # ── refresh through the command, with every privileged step a stand-in ───────
@@ -108,9 +126,11 @@ for platform in $platforms; do
     qualcomm | generic-aarch64) templates=$SUDO_TEST_ROOT/default/pacman/aarch64 ;;
     apple-silicon) templates=$SUDO_TEST_ROOT/default/pacman/apple-silicon ;;
   esac
-  for channel in stable rc edge; do
+  # No channel named refreshes to the platform's default one.
+  for channel in $(channels_for "$platform") ""; do
     reset_boundary
-    SUDO_TEST_PLATFORM=$platform refresh "$channel" || fail "$platform refreshes to $channel" "$(cat "$boundary_tmp/output")"
+    SUDO_TEST_PLATFORM=$platform refresh $channel || fail "$platform refreshes to '$channel'" "$(cat "$boundary_tmp/output")"
+    [[ -n $channel ]] || channel=$(omarchy_pacman_default_channel "$platform")
     python3 - "$SUDO_TEST_LOG" "$templates" "$channel" <<'PY'
 import sys
 events = [e for e in open(sys.argv[1]).read().splitlines() if e not in ('sudo -h', 'sudo -k')]
@@ -130,16 +150,19 @@ PY
     assert_boundary_cold "$platform $channel"
   done
 done
-pass "a refresh backs up and copies the platform's channel template and mirrorlist, then runs the cold hook and the upgrade"
+pass "a refresh backs up and copies the platform's channel template and mirrorlist, or its default channel's when none is named, then runs the cold hook and the upgrade"
 
-# A channel the platform has no template for, or a machine whose platform can't
-# be told, stops before anything changes.
-rm "$SUDO_TEST_ROOT/default/pacman/aarch64/pacman-rc.conf"
-reset_boundary
-if SUDO_TEST_PLATFORM=qualcomm refresh rc; then fail "a channel without a template is refused"; fi
-[[ -z $(events) ]] || fail "a channel without a template stops before anything" "$(events)"
-grep -q "Omarchy has no rc channel for qualcomm" "$boundary_tmp/output" || fail "the refusal says why" "$(cat "$boundary_tmp/output")"
-assert_boundary_cold "missing template"
+# A channel the platform has no template for (stable or rc on aarch64), or a
+# machine whose platform can't be told, stops before anything changes.
+for platform in qualcomm apple-silicon; do
+  for channel in stable rc; do
+    reset_boundary
+    if SUDO_TEST_PLATFORM=$platform refresh "$channel"; then fail "$platform: $channel is refused"; fi
+    [[ -z $(events) ]] || fail "$platform: $channel stops before anything" "$(events)"
+    grep -q "Omarchy has no $channel channel for $platform" "$boundary_tmp/output" || fail "the refusal says why" "$(cat "$boundary_tmp/output")"
+    assert_boundary_cold "$platform $channel"
+  done
+done
 cat >"$SUDO_TEST_ROOT/bin/omarchy-hw-platform" <<'STUB'
 #!/bin/bash
 exit 1

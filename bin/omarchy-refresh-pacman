@@ -24,8 +24,8 @@ omarchy_security_install_sudo_cleanup_traps
 omarchy_security_revoke_sudo_timestamp || exit 1
 omarchy_security_enable_no_update_sudo
 
-channel="${1:-stable}"
-if [[ $channel != "stable" && $channel != "rc" && $channel != "edge" ]]; then
+channel="${1:-}"
+if [[ -n $channel && $channel != "stable" && $channel != "rc" && $channel != "edge" ]]; then
   echo "Invalid channel: $channel" >&2
   exit 2
 fi
@@ -36,6 +36,7 @@ if ! platform=$(omarchy-hw-platform); then
   exit 1
 fi
 templates=$(omarchy_pacman_templates "$platform") || exit 1
+[[ -n $channel ]] || channel=$(omarchy_pacman_default_channel "$platform") || exit 1
 if [[ ! -f $templates/pacman-$channel.conf || ! -f $templates/mirrorlist-$channel ]]; then
   echo "Omarchy has no $channel channel for $platform. No repository configuration changed." >&2
   exit 1

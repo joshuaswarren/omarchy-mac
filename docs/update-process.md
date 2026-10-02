@@ -286,13 +286,18 @@ x86_64's are `default/pacman/pacman-<channel>.conf` and
 `default/pacman/aarch64/`, Arch Linux ARM's repositories with Omarchy's; Apple
 Silicon uses `default/pacman/apple-silicon/`, which puts Omarchy and Asahi ALARM
 ahead of Arch Linux ARM. Omarchy publishes aarch64 packages on edge alone so
-far, so each ARM channel's template points at edge until stable and rc publish
-there; changing that is a template edit. A channel change refuses a channel
-without both files for the platform before anything changes. On aarch64,
+far, and the `omarchy` and `omarchy-settings` packages there for stable and rc
+are the release line, which has no aarch64 support, so ARM platforms have edge
+templates only: switching an ARM machine to stable or rc would replace its
+runtime with one that cannot run it. Adding a stable or rc template once a
+release supports aarch64 is what opens that channel. A channel change refuses a
+channel without both files for the platform before anything changes. On aarch64,
 `omarchy-channel-set` refuses to link a dev checkout without
 `bin/omarchy-hw-platform` and `install/helpers/pacman.sh`, whose own refresh
 would write the x86_64 templates. `omarchy-reinstall-pkgs` resets to the
-platform's stable templates and installs its default packages.
+platform's default channel (`omarchy_pacman_default_channel`: stable, or edge on
+aarch64) and installs its default packages; install finalization does the same
+when the install's channel has no templates for the platform.
 
 There is no version file at runtime. `omarchy-version` derives the version from
 `pacman -Q` on whichever package is installed, or reports `dev (<hash>)` for a

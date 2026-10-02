@@ -69,13 +69,13 @@ for channel in stable rc edge dev; do
   pass "$channel starts cold, authorizes the switch per command, runs the refresh hook cold, hands off to one update authorization and exits cold"
 done
 
-# Every platform switches to every channel, copying its own templates.
+# Every aarch64 platform switches to edge and dev, copying its own templates.
 for platform in qualcomm generic-aarch64 apple-silicon; do
   case $platform in
     apple-silicon) templates=default/pacman/apple-silicon ;;
     *) templates=default/pacman/aarch64 ;;
   esac
-  for channel in stable rc edge dev; do
+  for channel in edge dev; do
     # dev refreshes from the checkout it links, on edge.
     pacman_channel=$channel root=$SUDO_TEST_ROOT
     [[ $channel != "dev" ]] || pacman_channel=edge root=$SUDO_TEST_HOME/omarchy
@@ -86,7 +86,20 @@ for platform in qualcomm generic-aarch64 apple-silicon; do
       fail "$platform $channel copies its own template" "$(<"$SUDO_TEST_LOG")"
   done
 done
-pass "aarch64 platforms switch to every channel through their own templates"
+pass "aarch64 platforms switch to edge and dev through their own templates"
+
+# stable and rc would install the release line, which has no aarch64 support:
+# an aarch64 machine refuses them before anything changes.
+for platform in qualcomm generic-aarch64 apple-silicon; do
+  for channel in stable rc; do
+    reset_boundary
+    if SUDO_TEST_PLATFORM=$platform run_channel "$channel"; then fail "$platform accepted $channel"; fi
+    if grep -Eq '^step:|^sudo -N ' "$SUDO_TEST_LOG"; then fail "$platform $channel was refused before any change" "$(<"$SUDO_TEST_LOG")"; fi
+    grep -q "Omarchy has no $channel channel for $platform" "$boundary_tmp/output" || fail "$platform $channel: the refusal says why" "$(<"$boundary_tmp/output")"
+    assert_boundary_cold "$platform $channel"
+  done
+done
+pass "aarch64 platforms refuse stable and rc before any change"
 
 # A channel the platform has no template for stops before anything, the dev
 # confirmation included.
