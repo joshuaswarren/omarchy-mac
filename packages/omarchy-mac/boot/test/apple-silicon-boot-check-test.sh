@@ -58,6 +58,16 @@ case "$*" in
         printf '%s: 2 total files, 1 altered files\n' "$2"
         exit 1
         ;;
+      "$2:depmod-size")
+        printf 'warning: %s: /usr/lib/modules/6.17.0-aurora1-ARCH/modules.dep (Modification time mismatch)\nwarning: %s: /usr/lib/modules/6.17.0-aurora1-ARCH/modules.dep (Size mismatch)\nwarning: %s: /usr/lib/modules/6.17.0-aurora1-ARCH/modules.dep (SHA256 checksum mismatch)\nwarning: %s: /usr/lib/modules/6.17.0-aurora1-ARCH/modules.alias (Modification time mismatch)\nwarning: %s: /usr/lib/modules/6.17.0-aurora1-ARCH/modules.alias (Size mismatch)\nwarning: %s: /usr/lib/modules/6.17.0-aurora1-ARCH/modules.alias (SHA256 checksum mismatch)\n' "$2" "$2" "$2" "$2" "$2" "$2" >&2
+        printf '%s: 2353 total files, 2 altered files\n' "$2"
+        exit 1
+        ;;
+      "$2:builtin-size")
+        printf 'warning: %s: /usr/lib/modules/6.17.0-aurora1-ARCH/modules.builtin (Size mismatch)\n' "$2" >&2
+        printf '%s: 2 total files, 1 altered files\n' "$2"
+        exit 1
+        ;;
       "$2:missing")
         printf 'warning: %s: /usr/lib/modules/6.17.0-aurora1-ARCH/modules.dep (No such file or directory)\n' "$2" >&2
         printf '%s: 2 total files, 1 altered files\n' "$2"
@@ -726,6 +736,21 @@ TEST_QKK_FAIL=linux-aurora:missing run_check
 expect_fail "a missing modules.* file" "linux-aurora files do not match the package mtree"
 TEST_QKK_FAIL=linux-aurora:silent run_check
 expect_fail "a pacman -Qkk that fails without a word" "pacman -Qkk linux-aurora failed"
+# A DKMS module leaves depmod's maps rewritten: the mtree's size and checksum
+# no longer match, and only depmod itself may vouch for them.
+mkdir -p "$modules/kernel/drivers/net/xone"
+printf 'fake module\n' >"$modules/kernel/drivers/net/xone/xone_dongle.ko"
+TEST_QKK_FAIL=linux-aurora:depmod-size run_check
+expect_fail "depmod maps that have not been regenerated after a DKMS module" "linux-aurora files do not match the package mtree"
+depmod -b "$root" -o "$test_tmp/depmod" "$kver" 2>/dev/null
+cp -a "$test_tmp/depmod/lib/modules/$kver/." "$modules/"
+TEST_QKK_FAIL=linux-aurora:depmod-size run_check
+expect_pass "depmod maps regenerated after a DKMS module"
+printf 'corrupt\n' >>"$modules/modules.dep"
+TEST_QKK_FAIL=linux-aurora:depmod-size run_check
+expect_fail "a corrupted modules.dep beside a DKMS module" "linux-aurora files do not match the package mtree"
+TEST_QKK_FAIL=linux-aurora:builtin-size run_check
+expect_fail "modules.builtin, which depmod reads but does not write" "linux-aurora files do not match the package mtree"
 unset TEST_QKK_FAIL
 
 TEST_QKK_NODB=1 run_check

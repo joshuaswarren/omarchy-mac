@@ -114,18 +114,47 @@ for package in "${rivals[@]}"; do
   [[ $package == "$kernel" || $package == "$bootloader" ]] || ! is_installed "$package" ||
     fail "$kernel boots with $bootloader, but $package is installed too"
 done
+# True when every size or checksum mismatch pacman reports on a modules.* file
+# of this kernel is what depmod itself writes: a fresh depmod run over the
+# installed modules reproduces the file byte for byte. depmod regenerates
+# modules.dep and its siblings whenever a module is installed or removed, so
+# after any DKMS module they no longer match the package mtree; what it does
+# not regenerate (modules.builtin, modules.builtin.modinfo) never passes.
+depmod_maps_match() {
+  local fresh=$workdir/depmod kver line rel
+  local flagged
+  flagged=$(grep -E '^warning: [^:]+: /usr/lib/modules/[^/]+/modules\.[A-Za-z.]+ \((Size|SHA256 checksum) mismatch\)$' <<<"$1") || return 0
+  kver=${flagged#*/usr/lib/modules/}
+  kver=${kver%%/*}
+  mkdir -p "$fresh"
+  if [[ -n $root ]]; then
+    depmod -b "$root" -o "$fresh" "$kver" 2>/dev/null || return 1
+  else
+    depmod -o "$fresh" "$kver" 2>/dev/null || return 1
+  fi
+  while IFS= read -r line; do
+    rel=${line#warning: *: }
+    rel=${rel%% (*}
+    cmp -s "$fresh/lib/modules/${rel#/usr/lib/modules/}" "$(path "$rel")" || return 1
+  done <<<"$flagged"
+}
+
 # The mtree check, minus the depmod outputs: the kernel package ships
-# modules.* and the depmod hook rewrites them on every install, so their
-# modification times never match. Anything else altered or missing fails.
+# modules.* and the depmod hook rewrites them on every install and after any
+# DKMS module, so their modification times never match and their size and
+# checksum match only while they are depmod's own (depmod_maps_match).
+# Anything else altered or missing fails.
 for package in "$kernel" "$bootloader"; do
   set +e
   mtree_output=$(LC_ALL=C pacman -Qkk "$package" 2>&1)
   mtree_status=$?
   set -e
+  modules_drop='\(Modification time mismatch\)$'
+  depmod_maps_match "$mtree_output" && modules_drop='\((Modification time|Size|SHA256 checksum) mismatch\)$'
   # A fresh image ships no sync databases; pacman warns about each on stderr.
   altered=$(grep -Ev ' altered files$' <<<"$mtree_output" |
     grep -Ev "^warning: database file for '[^']+' does not exist" |
-    grep -Ev '^warning: [^:]+: /usr/lib/modules/[^/]+/modules\.[A-Za-z.]+ \(Modification time mismatch\)$' || true)
+    grep -Ev "^warning: [^:]+: /usr/lib/modules/[^/]+/modules\.[A-Za-z.]+ $modules_drop" || true)
   # --boot-chain holds only the files the boot files are built from against
   # the mtree: the kernel image, its device trees and m1n1. Drift in any other
   # file of the package is left out; everything else pacman reports counts.
