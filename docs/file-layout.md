@@ -20,8 +20,7 @@ separate `omarchy-pkgs` repository, under `pkgbuilds/`):
   `default/limine/` and `default/snapper/` trees, and the boot/snapshot
   story end-to-end). Also ships the three debug binaries
   (`omarchy-debug`, `omarchy-debug-idle`, `omarchy-upload-log`) needed by
-  the live ISO env, and on aarch64 the pacman platform guard with its own
-  copy of the `omarchy-hw-platform` detector.
+  the live ISO env.
 
 Two other packages live in `omarchy-pkgs` but stand alone:
 `omarchy-keyring` (GPG keys for pacman) and `omarchy-nvim` (the Neovim
@@ -80,12 +79,6 @@ bin/omarchy-upload-log         ──►  omarchy-settings    /usr/bin/  (needed
 
 default/libalpm/hooks/*.hook
                                 ──►  omarchy             /usr/share/libalpm/hooks/*.hook
-                                                        (except the platform guard below)
-default/libalpm/hooks/00-omarchy-platform-guard.hook,
-default/libalpm/scripts/omarchy-platform-guard,
-bin/omarchy-hw-platform (a copy)
-                                ──►  omarchy-settings    /usr/share/libalpm/{hooks,scripts}/ (aarch64)
-                                                        (see platform-guard.md)
 
 install/**                     ──►  omarchy             /usr/share/omarchy/install/
 migrations/**                  ──►  omarchy             /usr/share/omarchy/migrations/
@@ -197,8 +190,6 @@ The audio panel lists every output, input and playback stream PipeWire has, and 
 A pattern is a JavaScript regular expression matched against a whole `node.name`. A `hidden` node is never listed as an output, an input or an app stream, unless it is the current default output or input (so the panel always shows what's in use), and never lights the microphone widget; a `replaced` node is left out only while a node matching `by` exists (a mono processed microphone behind a stereo copy of it, say). Missing or malformed JSON means no hints, and an invalid pattern or entry is skipped. The shell reads the file at that fixed path, which no environment variable moves (`shell/Commons/AudioNodes.qml`), and `test/shell.d/audio-test.sh` covers the parsing.
 
 A virtual source (an `Audio/Source/Virtual`, such as EasyEffects' or a platform's microphone mapping) needs no hint: Quickshell leaves it untyped, so the panel and widget set its volume and mute through `wpctl` (`shell/Commons/UntypedInput.qml`, one `pactl subscribe` for the whole shell) and the panel meters it with `omarchy-audio-source-level`, and the panel lists it because PulseAudio does (`omarchy-audio-sink-availability sources`).
-
-Two rules hold on every machine, hints or not: the input list leaves out a source whose ports PulseAudio reports all unavailable (an empty headset jack), unless it is the default, as the output list already did for sinks; and choosing an input (`omarchy-audio-input-set-default`) moves every recording except a filter's own capture, a source output with a `node.link-group` (the input half of a filter chain, loopback or echo canceller), which would otherwise be fed from the new input or from its own output.
 
 ### Why `etc-overrides/` exists
 
@@ -326,10 +317,9 @@ transaction in the already-visible update terminal, then runs
 ## First-run (`omarchy-provision-first-run`)
 
 Runs once on first interactive login, after the user manager is live. It
-first runs `omarchy-provision-user` so finalize catches up if it never ran (a
-failure is logged and keeps first-run pending, like any other step), then
-handles the steps that need a running graphical session and/or a working user
-systemd instance:
+first runs `omarchy-provision-user || true` so finalize catches up if it
+never ran, then handles the steps that need a running graphical session
+and/or a working user systemd instance:
 
 - `omarchy-hook-install post-update` for the three shipped hooks
   (`install-voxtype.hook`, `setup-fingerprint.hook`, `setup-agent.hook`).
@@ -384,7 +374,7 @@ finalization. It sources:
 Logging goes to `/var/log/omarchy-install.log` via
 `install/helpers/logging.sh`.
 
-Platform-specific setup asks `omarchy-hw-platform`, which prints `apple-silicon`, `qualcomm`, `generic-aarch64` or `generic`. It reads the vendor prefix of each token in the device tree's root `compatible` (`apple,` or `qcom,`, from `/proc/device-tree` or `/sys/firmware/devicetree/base`) and the CPU architecture, and fails when they contradict each other. Gate a platform on it or on a predicate built on it, such as `omarchy-hw-apple-silicon`, never on `uname -m` alone: `test/shell.d/architecture-gates-test.sh` fails on an architecture check that isn't a reviewed ABI, binary or repository exception.
+Platform-specific setup asks `omarchy-hw-platform`, which prints `apple-silicon`, `qualcomm`, `generic-aarch64` or `generic`. It reads the vendor prefix of each token in the device tree's root `compatible` (`apple,` or `qcom,`, from `/proc/device-tree` or `/sys/firmware/devicetree/base`) and the CPU architecture, and fails when they contradict each other.
 
 An image built away from the machine it will run on names its target in a root-owned manifest, `/var/lib/omarchy/image/target` (`format=1`, `platform=<omarchy-hw-platform value>`, unknown keys ignored). While the root is being built rather than booted, the detector answers from the manifest and never reads the build host's device tree. The root counts as built when it shows it: no `/run/systemd/system`, PID 1's root is another one (a chroot), or PID 1 is not systemd (a PID namespace). A booted system always answers from its hardware, even with a manifest left behind, so no unit that asks the detector may use `PrivatePIDs=`. As root the detector restarts in an empty environment and ignores the fixture variables its tests use.
 

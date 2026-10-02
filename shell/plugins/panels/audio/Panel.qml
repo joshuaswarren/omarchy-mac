@@ -51,9 +51,6 @@ Panel {
       if (!isAudioSource(n) && !Model.isUntypedSource(n, sourceAvailability)) continue
       var name = n.name || ""
       if (name === "quickshell" || platformHides(n)) continue
-      // A jack input, such as a headset microphone, stays listed with nothing
-      // plugged in; PulseAudio reports its ports unavailable.
-      if (sourceAvailability[name] === false) continue
       list.push(n)
     }
     return list

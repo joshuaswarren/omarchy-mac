@@ -22,6 +22,3 @@
 #   install/omarchy-aarch64.packages on aarch64.
 # etc/modprobe.d/omarchy-usb-autosuspend.conf
 #   Applies where usbcore is a module; a kernel that builds it in ignores it.
-#
-# The pacman platform guard is the one exception: the recipe installs it on
-# aarch64 only, where platform packages exist (docs/platform-guard.md).

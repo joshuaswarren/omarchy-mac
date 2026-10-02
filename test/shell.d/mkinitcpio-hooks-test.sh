@@ -14,11 +14,6 @@ for platform in apple-silicon qualcomm generic-aarch64 generic; do
 done
 # omarchy-settings without the runtime package: no detector on PATH.
 mkdir -p "$test_tmp/platforms/no-detector/bin"
-# The same where omarchy-settings ships the platform guard's detector copy,
-# which the baseline falls back to.
-fake_platform "$test_tmp/platforms/settings-apple-silicon" apple-silicon
-fake_platform "$test_tmp/platforms/settings-generic" generic
-mkdir -p "$test_tmp/settings-scripts"
 # A device tree naming both Apple and Qualcomm, which the detector refuses.
 fake_platform "$test_tmp/platforms/contradiction" apple-silicon
 printf '%s\0' apple,j416c qcom,x1e80100 >"$test_tmp/platforms/contradiction/proc/device-tree/compatible"
@@ -62,8 +57,6 @@ FILES=()
 HOOKS=(base systemd autodetect microcode modconf kms keyboard sd-vconsole block filesystems fsck)
 CONF
   cp "$ROOT"/etc/mkinitcpio.conf.d/*.conf "$etc/mkinitcpio.conf.d/"
-  sed -i "s|/usr/share/libalpm/scripts/omarchy-hw-platform|$test_tmp/settings-scripts/omarchy-hw-platform|" \
-    "$etc/mkinitcpio.conf.d/00-omarchy-hooks.conf"
 }
 
 # $1 names the drop-in; stdin is its content.
@@ -98,7 +91,7 @@ compose() {
   done
 
   local path="$fixture/bin:$ROOT/bin:$PATH"
-  [[ $1 != "no-detector" && $1 != settings-* ]] || path="$fixture/bin"
+  [[ $1 != "no-detector" ]] || path="$fixture/bin"
   KERNELVERSION=6.99.0-test OMARCHY_PROC_ROOT="$fixture/proc" OMARCHY_PCI_DEVICES_PATH="$devices" PATH="$path" "$BASH" -c '
     . "$1" || exit 1
     files=()
@@ -135,10 +128,6 @@ assert_hooks "Qualcomm starts from the Omarchy baseline" qualcomm "$omarchy_hook
 assert_hooks "generic aarch64 starts from the Omarchy baseline" generic-aarch64 "$omarchy_hooks"
 assert_hooks "x86 starts from the Omarchy baseline" generic "$omarchy_hooks"
 assert_hooks "without the detector the Omarchy baseline stays" no-detector "$omarchy_hooks"
-cp "$ROOT/bin/omarchy-hw-platform" "$test_tmp/settings-scripts/"
-assert_hooks "a Mac whose runtime lacks the detector uses the settings copy" settings-apple-silicon "$apple_hooks"
-assert_hooks "x86 with only the settings copy keeps the Omarchy baseline" settings-generic "$omarchy_hooks"
-rm "$test_tmp/settings-scripts/omarchy-hw-platform"
 
 if composed=$(compose contradiction 2>"$test_tmp/contradiction.err"); then
   fail "a platform the detector cannot place stops the build" "composed: $composed"
