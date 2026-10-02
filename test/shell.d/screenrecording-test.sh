@@ -459,11 +459,12 @@ rm "$stub_bin/wf-recorder"
 none_runtime="$tmp_dir/none-runtime"
 none_recordings="$tmp_dir/none-recordings"
 mkdir -p "$none_runtime" "$none_recordings"
+echo 424242 >"$none_runtime/omarchy-screenrecord-pid"
 XDG_RUNTIME_DIR="$none_runtime" OMARCHY_SCREENRECORD_DIR="$none_recordings" \
   "$ROOT/bin/omarchy-capture-screenrecording" --fullscreen >/dev/null 2>&1 || true
 [[ ! -e $none_runtime/omarchy-screenrecord-pid && ! -e $none_runtime/omarchy-screenrecord-filename ]] ||
-  fail "a recorder that cannot start records no state" "$(ls -a "$none_runtime")"
-pass "a recorder that cannot start records no state"
+  fail "a recorder that cannot start records no state, and clears a stale pid" "$(ls -a "$none_runtime")"
+pass "a recorder that cannot start records no state, and clears a stale pid"
 
 # Another recorder runs in both cases below: the helper answers for any
 # selection but a pid, and a stop by name ends it.

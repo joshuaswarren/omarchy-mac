@@ -272,6 +272,9 @@ start_screenrecording() {
   if [[ -z ${XDG_RUNTIME_DIR:-} ]]; then
     chmod 700 "$RUNTIME_DIR" || return 1
   fi
+  # A pid left by a recording that ended without a stop would otherwise hide
+  # this one from the toggle until it has started and saved its own.
+  rm -f "$REC_PID_FILE"
   local capture_args=()
   local target
 
