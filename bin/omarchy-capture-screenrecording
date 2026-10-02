@@ -209,6 +209,7 @@ wf_audio_device() {
       fi
       wf_audio_cleanup
     else
+      # No device to mix into: desktop audio records alone, as it always has.
       source=""
     fi
   fi
@@ -223,7 +224,7 @@ wf_audio_device() {
 }
 
 wf_audio_unavailable() {
-  omarchy-notification-send -u critical -t 5000 "Recording without $1 audio" "The $1 audio could not be captured." >/dev/null 2>&1
+  omarchy-notification-send -u critical -t 5000 "Recording without $1 audio" "The $1 audio could not be added to this recording." >/dev/null 2>&1
 }
 
 wf_audio_cleanup() {
