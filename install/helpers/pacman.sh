@@ -1,6 +1,6 @@
 # Pacman repository templates. Every platform has a pacman.conf and mirrorlist
-# per channel, copied into place whole, as x86_64's always were: x86_64's in
-# default/pacman, each ARM platform's in a directory of its own. Sourcing this
+# for each channel it offers, copied into place whole, as x86_64's always were:
+# x86_64's in default/pacman, each ARM platform's in a directory of its own. Sourcing this
 # file only defines functions; it never changes the system.
 
 # The directory holding <platform>'s pacman-<channel>.conf and

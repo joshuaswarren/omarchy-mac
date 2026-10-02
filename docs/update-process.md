@@ -277,9 +277,10 @@ Channel switching runs the `pre-refresh-pacman` hook once, during its refresh
 step: cold, behind the no-update wrapper, after the package config is re-synced
 and before the refresh transaction. It does not run if the switch fails earlier.
 
-Every platform has its own pacman.conf and mirrorlist per channel, and a
-channel change or install finalization copies them into place whole, the same
-way on every platform (`install/helpers/pacman.sh`); a channel change backs up
+Every platform has its own pacman.conf and mirrorlist for each channel it
+offers (x86_64 stable, rc and edge; aarch64 edge alone, below), and a channel
+change or install finalization copies them into place whole, the same way on
+every platform (`install/helpers/pacman.sh`); a channel change backs up
 the old pair first.
 x86_64's are `default/pacman/pacman-<channel>.conf` and
 `mirrorlist-<channel>`; Snapdragon and other aarch64 machines use
