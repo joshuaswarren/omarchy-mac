@@ -93,4 +93,4 @@ assertEqual(when('setup.direct-boot'), '! omarchy-hw-aarch64-apple', 'setup.dire
 // keeps a platform guard alone.
 assertEqual(when('install.ai.mlx'), 'omarchy-hw-aarch64-apple', 'install.ai.mlx is offered on Apple Silicon only')
 JS
-pass "the menu offers Windows on x86_64 only, and hides Direct Boot and offers MLX for Apple Silicon on Apple Silicon only"
+pass "the menu offers Windows on x86_64 only, and hides Direct Boot and offers MLX + Core ML (Apple Silicon) on Apple Silicon only"
