@@ -10,8 +10,8 @@ all="$ROOT/install/hardware/all.sh"
 migration="$ROOT/migrations/1786391100.sh"
 
 # Apple Silicon's BCM4387 is in the ID list, but there the firmware supplicant
-# is the one that works; both the leaf and the migration have to step aside.
-grep -Fq 'omarchy-hw-apple-silicon && exit 0' "$migration" || fail "Broadcom migration excludes Apple Silicon"
+# is the one that works, so the leaf steps aside. A Mac is always a fresh
+# install, which marks the migration done without running it.
 
 grep -q 'apple/fix-brcmfmac-supplicant.sh' "$all" ||
   fail "the brcmfmac quirk runs during hardware setup"
@@ -161,12 +161,6 @@ run_migration "Apple Inc." 4488 1
   fail "the migration is idempotent" "$(cat "$conf")"
 [[ ! -s $calls ]] || fail "a repaired install is left untouched" "$(cat "$calls")"
 pass "the migration is idempotent"
-
-rm -rf "$test_tmp/etc"
-run_migration "Apple Inc." 4433 0 1
-[[ ! -e $conf ]] || fail "the migration leaves Apple Silicon Wi-Fi alone"
-[[ ! -s $calls ]] || fail "the migration escalates nothing on Apple Silicon" "$(cat "$calls")"
-pass "the migration leaves Apple Silicon Wi-Fi alone"
 
 # The machine this was written for, with no T2 to fall back on.
 rm -rf "$test_tmp/etc"

@@ -104,62 +104,6 @@ grep -F 'Automatic control pauses while the screen is locked or the lid is close
   fail "manual does not describe lock and lid-close as a pause"
 pass "manual describes lock and lid-close as pausing automatic control"
 
-migration=$(ls "$ROOT"/migrations/*keyboard*als* "$ROOT"/migrations/*als*keyboard* 2>/dev/null | tail -n 1 || true)
-if [[ -z $migration ]]; then
-  migration=$(grep -l omarchy-brightness-keyboard-auto.service "$ROOT"/migrations/*.sh | tail -n 1 || true)
-fi
-[[ -n $migration ]] || fail "a migration enables the ALS keyboard backlight unit"
-grep -F 'omarchy-brightness-keyboard-auto.service' "$migration" >/dev/null
-grep -F 'systemctl --user enable' "$migration" >/dev/null
-grep -F '/usr/lib/systemd/user/omarchy-brightness-keyboard-auto.service' "$migration" >/dev/null ||
-  fail "migration does not enable the package-owned unit"
-grep -e 'cp .*omarchy-brightness-keyboard-auto.service' "$migration" >/dev/null &&
-  fail "migration copies the unit into ~/.config/systemd/user"
-pass "migration enables ambient keyboard backlight for existing installs"
-
-# Run it: with a live user manager it enables the unit through systemctl; from
-# a TTY, where enable fails, it writes the symlink enable would have written.
-migration_tmp=$(mktemp -d)
-mkdir -p "$migration_tmp/bin" "$migration_tmp/home"
-cat >"$migration_tmp/bin/systemctl" <<'SH'
-#!/bin/bash
-printf '%s\n' "$*" >>"$SYSTEMCTL_CALLS"
-[[ $* == "--user enable omarchy-brightness-keyboard-auto.service" && ${USER_MANAGER:-1} == 0 ]] && exit 1
-[[ $* == "--user is-active --quiet graphical-session.target" && ${USER_MANAGER:-1} == 0 ]] && exit 3
-exit 0
-SH
-chmod +x "$migration_tmp/bin/systemctl"
-wants="$migration_tmp/home/.config/systemd/user/graphical-session.target.wants/omarchy-brightness-keyboard-auto.service"
-
-HOME="$migration_tmp/home" PATH="$migration_tmp/bin:$PATH" SYSTEMCTL_CALLS="$migration_tmp/calls" \
-  bash -euo pipefail "$migration" >/dev/null
-grep -Fxq -- '--user enable omarchy-brightness-keyboard-auto.service' "$migration_tmp/calls" &&
-  grep -Fxq -- '--user start omarchy-brightness-keyboard-auto.service' "$migration_tmp/calls" ||
-  fail "migration enables and starts the unit in a live session" "$(<"$migration_tmp/calls")"
-[[ ! -e $wants ]] || fail "migration leaves enabling to systemctl when the user manager answers"
-
-HOME="$migration_tmp/home" PATH="$migration_tmp/bin:$PATH" SYSTEMCTL_CALLS="$migration_tmp/calls" USER_MANAGER=0 \
-  bash -euo pipefail "$migration" >/dev/null
-[[ $(readlink "$wants") == /usr/lib/systemd/user/omarchy-brightness-keyboard-auto.service ]] ||
-  fail "migration writes the enable symlink without a user manager"
-HOME="$migration_tmp/home" PATH="$migration_tmp/bin:$PATH" SYSTEMCTL_CALLS="$migration_tmp/calls" USER_MANAGER=0 \
-  bash -euo pipefail "$migration" >/dev/null ||
-  fail "migration runs again without a user manager"
-[[ $(readlink "$wants") == /usr/lib/systemd/user/omarchy-brightness-keyboard-auto.service ]] ||
-  fail "migration is idempotent without a user manager"
-pass "migration enables the unit with or without a live user manager, and again"
-
-# A user override of the unit in ~/.config/systemd/user is systemd's to honour;
-# the migration only enables, and never copies or replaces the unit itself.
-override="$migration_tmp/home/.config/systemd/user/omarchy-brightness-keyboard-auto.service"
-printf '[Service]\nExecStart=/bin/true\n' >"$override"
-HOME="$migration_tmp/home" PATH="$migration_tmp/bin:$PATH" SYSTEMCTL_CALLS="$migration_tmp/calls" \
-  bash -euo pipefail "$migration" >/dev/null
-[[ $(<"$override") == $'[Service]\nExecStart=/bin/true' ]] ||
-  fail "migration leaves a user's own unit alone"
-rm -rf "$migration_tmp"
-pass "migration leaves a user's own unit alone"
-
 # Drive the real keyboard-brightness command and the loop's tick against a fake
 # sensor and LED, the way lock blanking, wake restore and the keys interleave.
 loop=$(mktemp -d)

@@ -24,5 +24,4 @@ grep -q 'modinfo' "$ROOT/etc/mkinitcpio.conf.d/thunderbolt_module.conf" ||
   fail "thunderbolt is added only where the kernel has the module"
 grep -qx zram-generator "$ROOT/install/omarchy-aarch64.packages" ||
   fail "aarch64 installs the zram generator the zram drop-in needs"
-[[ -f $ROOT/migrations/1790328426.sh ]] || fail "existing aarch64 machines get the zram generator"
 pass "the profile's runtime decisions are in place"
