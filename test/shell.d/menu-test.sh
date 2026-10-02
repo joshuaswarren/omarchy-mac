@@ -472,8 +472,8 @@ assertEqual(
 )
 assertEqual(
   defaultById['trigger.capture.screenrecord.stop'].when,
-  'omarchy-capture-screenrecording-process',
-  'menu shows Stop Screenrecording for gpu-screen-recorder and wf-recorder'
+  'omarchy-capture-screenrecording --status',
+  'menu shows Stop Screenrecording only when its stop has a recording to end'
 )
 assert(
   /font\.family: row\.iconFont\.length > 0 \? row\.iconFont : root\.fontFamily/.test(menuQml),

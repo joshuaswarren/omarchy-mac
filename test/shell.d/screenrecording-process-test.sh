@@ -62,12 +62,12 @@ with tempfile.TemporaryDirectory() as temporary:
 print('ok - executable identity rejects recorder argument paths and safely shares status/signal selection')
 PY
 
-grep -Fq 'omarchy-capture-screenrecording-process' "$ROOT/shell/plugins/bar/indicators/ScreenRecording.qml" ||
-  fail "the bar recording indicator uses the process helper"
+grep -Fq '["omarchy-capture-screenrecording", "--status"]' "$ROOT/shell/plugins/bar/indicators/ScreenRecording.qml" ||
+  fail "the bar recording indicator asks the recorder script, which stop also uses"
 ! grep -Fq 'gpu-screen-recorder' "$ROOT/shell/plugins/bar/indicators/ScreenRecording.qml" ||
   fail "the bar recording indicator still greps gpu-screen-recorder"
-grep -Fq '"when":"omarchy-capture-screenrecording-process"' "$ROOT/default/omarchy/omarchy-menu.jsonc" ||
-  fail "Stop Screenrecording uses the process helper so wf-recorder counts"
+grep -Fq '"when":"omarchy-capture-screenrecording --status"' "$ROOT/default/omarchy/omarchy-menu.jsonc" ||
+  fail "Stop Screenrecording asks the recorder script, which its action also uses"
 ! grep -Fq "pgrep -f '^gpu-screen-recorder'" "$ROOT/default/omarchy/omarchy-menu.jsonc" ||
   fail "Stop Screenrecording still greps gpu-screen-recorder"
-pass "the bar indicator and the menu follow the recorder process helper"
+pass "the bar indicator and the menu ask the recorder script whether its stop has a recording to end"

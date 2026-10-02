@@ -2,7 +2,7 @@
 
 # omarchy:summary=Start or stop screen recording
 # omarchy:group=capture
-# omarchy:args=[--fullscreen] [--with-desktop-audio] [--with-microphone-audio] [--with-webcam] [--webcam-device=<device>] [--webcam-size=<small|medium|large>] [--resolution=<size>] [--stop-recording]
+# omarchy:args=[--fullscreen] [--with-desktop-audio] [--with-microphone-audio] [--with-webcam] [--webcam-device=<device>] [--webcam-size=<small|medium|large>] [--resolution=<size>] [--stop-recording] [--status]
 # omarchy:examples=omarchy screenrecord | omarchy capture screenrecording --with-desktop-audio
 # omarchy:aliases=omarchy screenrecord
 #
@@ -28,11 +28,6 @@
 [[ -f ~/.config/user-dirs.dirs ]] && source ~/.config/user-dirs.dirs
 OUTPUT_DIR="${OMARCHY_SCREENRECORD_DIR:-${XDG_VIDEOS_DIR:-$HOME/Videos}}"
 
-if [[ ! -d $OUTPUT_DIR ]]; then
-  omarchy-notification-send -u critical -t 3000 "Screen recording directory does not exist: $OUTPUT_DIR"
-  exit 1
-fi
-
 DESKTOP_AUDIO="false"
 MICROPHONE_AUDIO="false"
 WEBCAM="false"
@@ -41,6 +36,7 @@ WEBCAM_SIZE="medium"
 RESOLUTION=""
 FULLSCREEN="false"
 STOP_RECORDING="false"
+STATUS="false"
 # Both of these live in the per-user runtime directory, which is 0700. What
 # RECORDING_FILE holds is read back on stop and used as a path -- ffmpeg writes
 # beside it, `mv` replaces it, and `rm -f` deletes its preview -- so a name in
@@ -68,6 +64,7 @@ for arg in "$@"; do
   --resolution=*) RESOLUTION="${arg#*=}" ;;
   --fullscreen) FULLSCREEN="true" ;;
   --stop-recording) STOP_RECORDING="true" ;;
+  --status) STATUS="true" ;;
   esac
 done
 
@@ -78,6 +75,13 @@ small | medium | large) ;;
   exit 1
   ;;
 esac
+
+# --status only answers whether our recording runs, for the bar and the menu, so
+# it needs no recordings directory and never notifies.
+if [[ $STATUS != "true" && ! -d $OUTPUT_DIR ]]; then
+  omarchy-notification-send -u critical -t 3000 "Screen recording directory does not exist: $OUTPUT_DIR"
+  exit 1
+fi
 
 start_webcam_overlay() {
   cleanup_webcam
@@ -449,7 +453,9 @@ finalize_recording() {
   fi
 }
 
-if screenrecording_active; then
+if [[ $STATUS == "true" ]]; then
+  screenrecording_active
+elif screenrecording_active; then
   stop_screenrecording
 elif [[ $STOP_RECORDING == "true" ]]; then
   exit 1

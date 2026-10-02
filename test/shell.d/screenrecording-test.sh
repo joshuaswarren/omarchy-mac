@@ -473,7 +473,10 @@ recording_flag="$tmp_dir/recording"
 cat >"$stub_bin/omarchy-capture-screenrecording-process" <<'SH'
 #!/bin/bash
 printf '%s\n' "$*" >>"$OMARCHY_TEST_HELPER_CALLS"
-[[ $1 == "--pid" ]] && exit 1
+if [[ $1 == "--pid" ]]; then
+  [[ $2 == "${OMARCHY_TEST_LIVE_PID:-}" ]]
+  exit
+fi
 if [[ $* == *"--signal INT" ]]; then
   rm -f "$OMARCHY_TEST_RECORDING"
   exit 0
@@ -515,3 +518,24 @@ grep -Fxq -- '--signal INT' "$helper_calls" ||
 ! grep -Fq -- '--signal KILL' "$helper_calls" ||
   fail "a recorder that stops on INT is not killed" "$(<"$helper_calls")"
 pass "without a saved pid, status and stop select the user's recorders"
+
+# The bar indicator and the menu's Stop row ask --status, so they show a stop
+# exactly when the toggle has a recording of ours to end. It needs no
+# recordings directory, never notifies and never signals.
+status() {
+  XDG_RUNTIME_DIR="$1" OMARCHY_TEST_HELPER_CALLS="$helper_calls" OMARCHY_TEST_RECORDING="$recording_flag" \
+    OMARCHY_TEST_LIVE_PID="${2:-}" OMARCHY_SCREENRECORD_DIR="$tmp_dir/no-such-recordings" \
+    "$ROOT/bin/omarchy-capture-screenrecording" --status >/dev/null 2>&1
+}
+touch "$recording_flag"
+: >"$helper_calls"
+rm -f "$OMARCHY_TEST_NOTIFICATION_ARGS"
+echo 424242 >"$stale_runtime/omarchy-screenrecord-pid"
+if status "$stale_runtime"; then fail "--status reports nothing of ours behind a stale pid"; fi
+status "$legacy_runtime" || fail "--status reports a recording started before the pid was saved"
+status "$stale_runtime" 424242 || fail "--status reports the recorder its saved pid names"
+rm -f "$recording_flag"
+if status "$legacy_runtime"; then fail "--status reports nothing when no recorder runs"; fi
+! grep -q -- '--signal' "$helper_calls" || fail "--status signals nothing" "$(<"$helper_calls")"
+[[ ! -e $OMARCHY_TEST_NOTIFICATION_ARGS ]] || fail "--status never notifies, even without a recordings directory" "$(<"$OMARCHY_TEST_NOTIFICATION_ARGS")"
+pass "--status answers what stop would act on, without a recordings directory, notifications or signals"
