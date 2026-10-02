@@ -182,29 +182,48 @@ recorder_backends() {
 # wf-recorder records a single audio device. Map the desktop/mic flags onto one:
 # desktop -> default sink monitor, mic -> default source. When both are requested,
 # route them through a throwaway null sink so a single track carries both; the
-# module ids are saved to PA_MODULES_FILE so stop can unload them.
+# module ids are saved to PA_MODULES_FILE so stop can unload them. A requested
+# source that can't be recorded is left out with a notification naming it, and
+# the recording carries whichever source remains.
 wf_audio_device() {
-  local sink source m
-  if [[ $DESKTOP_AUDIO == "true" && $MICROPHONE_AUDIO == "true" ]]; then
-    sink=$(pactl get-default-sink 2>/dev/null)
-    source=$(pactl get-default-source 2>/dev/null)
-    if [[ -n $sink && -n $source ]] &&
-      m=$(pactl load-module module-null-sink sink_name=omarchy_screenrec sink_properties=device.description=omarchy_screenrec 2>/dev/null); then
-      : >"$PA_MODULES_FILE"
-      echo "$m" >>"$PA_MODULES_FILE"
-      m=$(pactl load-module module-loopback source="${sink}.monitor" sink=omarchy_screenrec latency_msec=20 2>/dev/null) && echo "$m" >>"$PA_MODULES_FILE"
-      m=$(pactl load-module module-loopback source="$source" sink=omarchy_screenrec latency_msec=20 2>/dev/null) && echo "$m" >>"$PA_MODULES_FILE"
-      echo "omarchy_screenrec.monitor"
-      return
+  local sink="" source="" m
+  [[ $DESKTOP_AUDIO == "true" ]] && sink=$(pactl get-default-sink 2>/dev/null)
+  [[ $MICROPHONE_AUDIO == "true" ]] && source=$(pactl get-default-source 2>/dev/null)
+
+  if [[ -n $sink && -n $source ]]; then
+    if m=$(pactl load-module module-null-sink sink_name=omarchy_screenrec sink_properties=device.description=omarchy_screenrec 2>/dev/null); then
+      echo "$m" >"$PA_MODULES_FILE"
+      if m=$(pactl load-module module-loopback source="${sink}.monitor" sink=omarchy_screenrec latency_msec=20 2>/dev/null); then
+        echo "$m" >>"$PA_MODULES_FILE"
+      else
+        sink=""
+      fi
+      if m=$(pactl load-module module-loopback source="$source" sink=omarchy_screenrec latency_msec=20 2>/dev/null); then
+        echo "$m" >>"$PA_MODULES_FILE"
+      else
+        source=""
+      fi
+      if [[ -n $sink && -n $source ]]; then
+        echo "omarchy_screenrec.monitor"
+        return
+      fi
+      wf_audio_cleanup
+    else
+      source=""
     fi
-    # Combined sink unavailable: fall back to desktop audio alone.
-    [[ -n $sink ]] && echo "${sink}.monitor"
-  elif [[ $DESKTOP_AUDIO == "true" ]]; then
-    sink=$(pactl get-default-sink 2>/dev/null)
-    [[ -n $sink ]] && echo "${sink}.monitor"
-  elif [[ $MICROPHONE_AUDIO == "true" ]]; then
-    pactl get-default-source 2>/dev/null
   fi
+
+  [[ $DESKTOP_AUDIO == "true" && -z $sink ]] && wf_audio_unavailable desktop
+  [[ $MICROPHONE_AUDIO == "true" && -z $source ]] && wf_audio_unavailable microphone
+  if [[ -n $sink ]]; then
+    echo "${sink}.monitor"
+  elif [[ -n $source ]]; then
+    echo "$source"
+  fi
+}
+
+wf_audio_unavailable() {
+  omarchy-notification-send -u critical -t 5000 "Recording without $1 audio" "The $1 audio could not be captured." >/dev/null 2>&1
 }
 
 wf_audio_cleanup() {
