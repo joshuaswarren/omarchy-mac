@@ -17,11 +17,6 @@ from pathlib import Path
 p = Path(sys.argv[1])
 p.write_text(p.read_text().replace('/usr/share/omarchy', sys.argv[2]))
 PY
-# The configuration a refusal reads to tell a machine it has no Omarchy
-# repository.
-config=$boundary_tmp/pacman.conf
-printf '[options]\nArchitecture = auto\n[omarchy]\nServer = https://pkgs.omarchy.org/edge/$arch\n' >"$config"
-sed -i "s|/etc/pacman.conf|$config|" "$SUDO_TEST_ROOT/bin/omarchy-channel-set"
 
 for command in omarchy-dev-link omarchy-dev-unlink omarchy-state gum git; do
   cat >"$SUDO_TEST_ROOT/bin/$command" <<'STUB'
@@ -74,33 +69,37 @@ for channel in stable rc edge dev; do
   pass "$channel starts cold, authorizes the switch per command, runs the refresh hook cold, hands off to one update authorization and exits cold"
 done
 
-# A channel with no qualified packages for the platform stops before anything,
-# the dev confirmation included.
-for platform in apple-silicon qualcomm generic-aarch64; do
+# Every platform switches to every channel, copying its own templates.
+for platform in qualcomm generic-aarch64 apple-silicon; do
+  case $platform in
+    apple-silicon) templates=default/pacman/apple-silicon ;;
+    *) templates=default/pacman/aarch64 ;;
+  esac
   for channel in stable rc edge dev; do
-    [[ $platform != "apple-silicon" && ( $channel == "edge" || $channel == "dev" ) ]] && continue
+    # dev refreshes from the checkout it links, on edge.
+    pacman_channel=$channel root=$SUDO_TEST_ROOT
+    [[ $channel != "dev" ]] || pacman_channel=edge root=$SUDO_TEST_HOME/omarchy
     reset_boundary
-    if SUDO_TEST_PLATFORM=$platform run_channel "$channel"; then fail "$platform refused $channel"; fi
-    if grep -Eq '^step:|^sudo -N ' "$SUDO_TEST_LOG"; then fail "$platform: $channel was refused before any change" "$(<"$SUDO_TEST_LOG")"; fi
-    grep -q "not qualified for $platform" "$boundary_tmp/output" || fail "$platform: the refusal says why" "$(<"$boundary_tmp/output")"
-    assert_boundary_cold "$platform $channel"
+    SUDO_TEST_PLATFORM=$platform run_channel "$channel" || fail "$platform $channel failed" "$(<"$boundary_tmp/output")"
+    assert_scoped_channel "$platform $channel"
+    grep -Fqx "step:cp -f $root/$templates/pacman-$pacman_channel.conf /etc/pacman.conf" "$SUDO_TEST_LOG" ||
+      fail "$platform $channel copies its own template" "$(<"$SUDO_TEST_LOG")"
   done
 done
-pass "aarch64 platforms refuse a channel not qualified for them before any change, Apple Silicon every one for now"
+pass "aarch64 platforms switch to every channel through their own templates"
 
-! grep -q 'no Omarchy repository' "$boundary_tmp/output" || fail "a machine with an Omarchy repository hears only the refusal"
-printf '[options]\nArchitecture = auto\n[core]\nServer = https://arm.example/$arch/$repo\n' >"$config"
-for platform in qualcomm generic-aarch64 apple-silicon; do
+# A channel the platform has no template for stops before anything, the dev
+# confirmation included.
+mv "$SUDO_TEST_ROOT/default/pacman/apple-silicon/pacman-edge.conf" "$boundary_tmp/saved-template"
+for channel in edge dev; do
   reset_boundary
-  if SUDO_TEST_PLATFORM=$platform run_channel stable; then fail "$platform refused stable"; fi
-  if [[ $platform == "apple-silicon" ]]; then
-    ! grep -q 'no Omarchy repository' "$boundary_tmp/output" || fail "Apple Silicon's refusal is unchanged" "$(<"$boundary_tmp/output")"
-  else
-    grep -q 'no Omarchy repository.*omarchy-channel-set edge' "$boundary_tmp/output" ||
-      fail "$platform: a machine with no Omarchy repository is told to switch to edge" "$(<"$boundary_tmp/output")"
-  fi
+  if SUDO_TEST_PLATFORM=apple-silicon run_channel "$channel"; then fail "a channel without a template was accepted ($channel)"; fi
+  if grep -Eq '^step:|^sudo -N ' "$SUDO_TEST_LOG"; then fail "$channel was refused before any change" "$(<"$SUDO_TEST_LOG")"; fi
+  grep -q "Omarchy has no edge channel for apple-silicon" "$boundary_tmp/output" || fail "the refusal says why" "$(<"$boundary_tmp/output")"
+  assert_boundary_cold "missing template $channel"
 done
-pass "a Snapdragon or generic aarch64 machine with no Omarchy repository is told to switch to edge when it asks for another channel"
+mv "$boundary_tmp/saved-template" "$SUDO_TEST_ROOT/default/pacman/apple-silicon/pacman-edge.conf"
+pass "a channel without a template for the platform is refused before any change"
 
 reset_boundary
 wrapper="$SUDO_TEST_HOME/omarchy/default/omarchy/sudo-no-update/sudo"
@@ -132,6 +131,21 @@ for required in bin/omarchy-hw-platform install/helpers/pacman.sh; do
   done
 done
 pass "on aarch64 a dev checkout that can't keep the machine's repositories is rejected before linking"
+
+# The checkout's own refresh copies its own templates, so one without them for
+# this platform is refused before linking.
+template=$checkout/default/pacman/aarch64/mirrorlist-edge
+mv "$template" "$boundary_tmp/saved-template"
+reset_boundary
+if SUDO_TEST_PLATFORM=qualcomm run_channel dev; then fail "a dev checkout without its templates was accepted"; fi
+mv "$boundary_tmp/saved-template" "$template"
+if grep -Eq '^step:omarchy-(dev-link|state)|^step:pacman|^sudo -N ' "$SUDO_TEST_LOG"; then
+  fail "a dev checkout without its templates changed the system before rejection" "$(<"$SUDO_TEST_LOG")"
+fi
+grep -q "Update the checkout before switching to dev; it has no edge templates for qualcomm" "$boundary_tmp/output" ||
+  fail "the rejection names the missing templates" "$(<"$boundary_tmp/output")"
+assert_boundary_cold "checkout without templates"
+pass "a dev checkout without its templates for the platform is rejected before linking"
 
 reset_boundary
 OMARCHY_PATH="$SUDO_TEST_HOME/omarchy" run_channel stable || fail "leaving dev failed" "$(<"$boundary_tmp/output")"

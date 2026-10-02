@@ -348,9 +348,12 @@ pass "a step that only changed Limine's kernel command line gets the rebuild"
 # makes its own master key on its first boot, before any step installs a package.
 keyring_bin="$test_tmp/keyring-bin"
 mkdir -p "$keyring_bin" "$fixture/install/post-install"
-cp "$ROOT/install/post-install/pacman.sh" "$fixture/install/post-install/"
-# Finalization's repositories are pacman-arm-channel-test.sh's.
-echo 'omarchy_pacman_write_template() { :; }' >"$fixture/install/helpers/pacman.sh"
+# Finalization's repositories are pacman-templates-test.sh's; here they land in
+# the root under test, never the host's /etc.
+sed 's|/etc/pacman|$OMARCHY_IMAGE_ROOT/etc/pacman|g' "$ROOT/install/post-install/pacman.sh" >"$fixture/install/post-install/pacman.sh"
+cp "$ROOT/install/helpers/pacman.sh" "$fixture/install/helpers/pacman.sh"
+mkdir -p "$fixture/default"
+cp -r "$ROOT/default/pacman" "$fixture/default/"
 : >"$fixture/install/hardware/pacman.sh"
 for command in pacman-key omarchy-pkg-add; do
   cat >"$keyring_bin/$command" <<'SH'
@@ -365,6 +368,7 @@ export KEYRING="$test_tmp/keyring" KEYRING_FAIL="$test_tmp/keyring-fail"
 request=var/lib/omarchy/image/pacman-keyring
 
 finalize() {
+  mkdir -p "$1/etc/pacman.d"
   OMARCHY_IMAGE_ROOT="$1" OMARCHY_PATH="$fixture" OMARCHY_INSTALL="$fixture/install" PLATFORM=$2 \
     PATH="$keyring_bin:$base_path" bash -e -c 'source "$1"' bash "$fixture/install/post-install/pacman.sh"
 }

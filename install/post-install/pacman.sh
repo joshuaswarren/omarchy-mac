@@ -1,18 +1,20 @@
 # Configure pacman after package installation completes. Offline target package
 # installs use the live ISO's offline pacman.conf until this final restore,
-# which writes the platform's online repositories (install/helpers/pacman.sh).
-# A Mac's image brings its keyrings, as the ISO does on x86_64; other aarch64
+# which copies the platform's channel templates (install/helpers/pacman.sh). A
+# Mac's image brings its keyrings, as the ISO does on x86_64; other aarch64
 # platforms install Arch Linux ARM's before its repositories replace the
 # offline ones, and trust every installed keyring before the first signed sync.
 source "$OMARCHY_PATH/install/helpers/pacman.sh"
 source "$OMARCHY_PATH/install/helpers/image-target.sh"
 platform=$(omarchy-hw-platform)
+templates=$(omarchy_pacman_templates "$platform")
 
 if [[ $platform == "qualcomm" || $platform == "generic-aarch64" ]]; then
   omarchy-pkg-add archlinuxarm-keyring
 fi
 
-omarchy_pacman_write_template "${OMARCHY_MIRROR:-stable}" "$platform" /etc/pacman.conf /etc/pacman.d/mirrorlist
+cp -f "$templates/pacman-${OMARCHY_MIRROR:-stable}.conf" /etc/pacman.conf
+cp -f "$templates/mirrorlist-${OMARCHY_MIRROR:-stable}" /etc/pacman.d/mirrorlist
 
 # An image build leaves the keyring to each machine's first boot, so no two
 # share a master key (install/helpers/image-target.sh).

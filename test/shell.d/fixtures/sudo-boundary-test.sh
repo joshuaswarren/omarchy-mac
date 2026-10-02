@@ -33,6 +33,8 @@ copy_boundary_file bin/omarchy-security-functions
 copy_boundary_file bin/omarchy-update-pacman
 copy_boundary_file default/omarchy/sudo-no-update/sudo
 copy_boundary_file install/helpers/pacman.sh
+# Channel changes copy the platform's templates; the copy itself is a stand-in.
+cp -r "$ROOT/default/pacman" "$SUDO_TEST_ROOT/default/"
 
 # Channel changes ask for the platform. x86 unless a test says otherwise, so no
 # test reads the host's hardware.
