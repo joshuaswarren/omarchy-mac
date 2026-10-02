@@ -465,20 +465,15 @@ XDG_RUNTIME_DIR="$none_runtime" OMARCHY_SCREENRECORD_DIR="$none_recordings" \
   fail "a recorder that cannot start records no state" "$(ls -a "$none_runtime")"
 pass "a recorder that cannot start records no state"
 
-# A recorded pid that is no longer a recorder must not hide the recording the
-# bar and the menu see: status and stop both fall back to the user's recorders,
-# and stop signals those rather than the stale pid.
-stale_runtime="$tmp_dir/stale-runtime"
-mkdir -p "$stale_runtime"
-echo 424242 >"$stale_runtime/omarchy-screenrecord-pid"
+# Another recorder runs in both cases below: the helper answers for any
+# selection but a pid, and a stop by name ends it.
 helper_calls="$tmp_dir/helper-calls"
 recording_flag="$tmp_dir/recording"
-touch "$recording_flag"
 cat >"$stub_bin/omarchy-capture-screenrecording-process" <<'SH'
 #!/bin/bash
 printf '%s\n' "$*" >>"$OMARCHY_TEST_HELPER_CALLS"
 [[ $1 == "--pid" ]] && exit 1
-if [[ $* == "--signal INT" ]]; then
+if [[ $* == *"--signal INT" ]]; then
   rm -f "$OMARCHY_TEST_RECORDING"
   exit 0
 fi
@@ -486,17 +481,36 @@ fi
 SH
 chmod +x "$stub_bin/omarchy-capture-screenrecording-process"
 
-XDG_RUNTIME_DIR="$stale_runtime" OMARCHY_TEST_HELPER_CALLS="$helper_calls" OMARCHY_TEST_RECORDING="$recording_flag" \
+# A saved pid that is no longer a recorder is a recording that ended without a
+# stop: nothing of ours records, so stop has nothing to do and signals no other
+# recorder the user runs.
+stale_runtime="$tmp_dir/stale-runtime"
+mkdir -p "$stale_runtime"
+echo 424242 >"$stale_runtime/omarchy-screenrecord-pid"
+touch "$recording_flag"
+: >"$helper_calls"
+if XDG_RUNTIME_DIR="$stale_runtime" OMARCHY_TEST_HELPER_CALLS="$helper_calls" OMARCHY_TEST_RECORDING="$recording_flag" \
+  OMARCHY_SCREENRECORD_DIR="$recording_dir" \
+  "$ROOT/bin/omarchy-capture-screenrecording" --stop-recording >/dev/null 2>&1; then
+  fail "stop finds no recording of ours behind a stale pid" "$(<"$helper_calls")"
+fi
+! grep -q -- '--signal' "$helper_calls" ||
+  fail "stop signals nothing when the saved pid is stale" "$(<"$helper_calls")"
+[[ -e $recording_flag ]] || fail "the other recorder keeps recording"
+pass "a stale saved pid leaves every other recorder alone"
+
+# Without a saved pid (a recording started before the pid was saved), status
+# and stop select every recorder the user runs, as the bar and the menu do.
+legacy_runtime="$tmp_dir/legacy-runtime"
+mkdir -p "$legacy_runtime"
+touch "$recording_flag"
+: >"$helper_calls"
+XDG_RUNTIME_DIR="$legacy_runtime" OMARCHY_TEST_HELPER_CALLS="$helper_calls" OMARCHY_TEST_RECORDING="$recording_flag" \
   OMARCHY_SCREENRECORD_DIR="$recording_dir" \
   "$ROOT/bin/omarchy-capture-screenrecording" --stop-recording >/dev/null 2>&1 ||
-  fail "stop finds a recording its stale pid does not name" "$(<"$helper_calls")"
+  fail "stop finds a recording started before the pid was saved" "$(<"$helper_calls")"
 grep -Fxq -- '--signal INT' "$helper_calls" ||
-  fail "stop signals the user's recorder when the recorded pid is stale" "$(<"$helper_calls")"
-! grep -q -- '--pid 424242 --signal' "$helper_calls" ||
-  fail "stop never signals a stale pid" "$(<"$helper_calls")"
-! grep -Fxq -- '--signal KILL' "$helper_calls" ||
+  fail "stop signals the user's recorders when no pid was saved" "$(<"$helper_calls")"
+! grep -Fq -- '--signal KILL' "$helper_calls" ||
   fail "a recorder that stops on INT is not killed" "$(<"$helper_calls")"
-[[ ! -e $stale_runtime/omarchy-screenrecord-pid ]] ||
-  fail "stop clears the stale pid"
-pass "status and stop fall back to the user's recorders when the recorded pid is stale"
-
+pass "without a saved pid, status and stop select the user's recorders"

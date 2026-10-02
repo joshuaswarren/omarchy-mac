@@ -328,22 +328,23 @@ start_screenrecording() {
   return 1
 }
 
-# Selects the recorder this script started, matched by its executable. When
-# the pid it recorded is no longer a recorder (a recording started before the
-# pid was recorded, or one that died), every recorder the user runs counts, as
-# for the bar indicator and the menu, so status and stop agree with them.
+# Selects the recorder this script started, by the pid it saved. A saved pid
+# that is no longer a recorder is a recording that ended without a stop, so
+# nothing of ours is recording and no other recorder is touched. Without a
+# saved pid (a recording started before the pid was saved), every recorder the
+# user runs counts, as for the bar indicator and the menu.
 select_recorder() {
-  local pid=""
-  [[ -f $REC_PID_FILE ]] && pid=$(<"$REC_PID_FILE")
-
   RECORDER=()
-  if [[ $pid =~ ^[0-9]+$ ]] && omarchy-capture-screenrecording-process --pid "$pid"; then
-    RECORDER=(--pid "$pid")
-  fi
+  [[ -f $REC_PID_FILE ]] || return 0
+
+  local pid
+  pid=$(<"$REC_PID_FILE")
+  [[ $pid =~ ^[0-9]+$ ]] && omarchy-capture-screenrecording-process --pid "$pid" || return 1
+  RECORDER=(--pid "$pid")
 }
 
+# Stops the recorder screenrecording_active selected.
 stop_screenrecording() {
-  select_recorder
   omarchy-capture-screenrecording-process "${RECORDER[@]}" --signal INT # SIGINT required to save video properly
 
   # Wait a maximum of 5 seconds to finish before hard killing
@@ -390,8 +391,7 @@ toggle_screenrecording_indicator() {
 }
 
 screenrecording_active() {
-  select_recorder
-  omarchy-capture-screenrecording-process "${RECORDER[@]}"
+  select_recorder && omarchy-capture-screenrecording-process "${RECORDER[@]}"
 }
 
 finalize_recording() {
