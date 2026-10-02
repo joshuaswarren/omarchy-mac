@@ -22,6 +22,11 @@ bin/omarchy-hw-platform if ! machine=$(uname -m) || [[ -z $machine ]]; then
 bin/omarchy-windows-vm if [[ $(uname -m) != "x86_64" ]]; then
 default/omarchy/omarchy-menu.jsonc "label":"Windows","when":"[[ $(uname -m) == \"x86_64\" ]]"
 
+# Their vendors currently publish no native Linux aarch64 build.
+default/omarchy/omarchy-menu.jsonc "label":"Edge","when":"[[ $(uname -m) == \"x86_64\" ]]"
+default/omarchy/omarchy-menu.jsonc "label":"Dropbox","when":"[[ $(uname -m) == \"x86_64\" ]]"
+default/omarchy/omarchy-menu.jsonc "label":"Spotify","when":"[[ $(uname -m) == \"x86_64\" ]]"
+
 # The menu reads uname once per guard batch for the row above; it decides nothing.
 shell/plugins/menu/MenuModel.js "uname -m"
 

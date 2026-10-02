@@ -286,18 +286,24 @@ assert(
 assert(!defaultById['install.ai.crush'], 'menu removes Crush from Install > AI')
 // Software you already have keeps its place in Install, dimmed rather than
 // dropped, so the list reads as a catalog of what Omarchy can install.
-// Chromium Account is the sole Install row with anything left to hide for, and
-// the Windows VM only hides off x86_64, where its guest can't run, so any other
-// `when:` here is a row that went back to vanishing once installed.
+// Chromium Account is the sole Install row with anything left to hide for. The
+// Windows VM, whose guest can't run elsewhere, and the installers whose vendors
+// ship Linux builds for x86_64 alone hide only off x86_64, so any other `when:`
+// here is a row that went back to vanishing once installed.
 const windowsGuard = '[[ $(uname -m) == "x86_64" ]]'
+const x86OnlyInstalls = ['install.windows', 'install.browser.edge', 'install.service.dropbox', 'install.service.spotify']
 assertDeepEqual(
   defaultItems
     .filter(item => item.id.startsWith('install.') && item.action && item.when)
-    .map(item => item.id),
-  ['install.windows', 'install.service.chromium-account'],
+    .map(item => item.id)
+    .sort(),
+  [...x86OnlyInstalls, 'install.service.chromium-account'].sort(),
   'menu never hides an Install row because the software is already there'
 )
-assertEqual(defaultById['install.windows'].when, windowsGuard, 'menu hides the Windows VM only off x86_64')
+assert(
+  x86OnlyInstalls.every(id => defaultById[id].when === windowsGuard),
+  'menu hides the Windows VM and the x86_64-only installers only off x86_64'
+)
 assert(
   ['install.browser.zen', 'install.editor.vscode', 'install.gaming.steam', 'install.development.rust', 'install.windows'].every(
     id => defaultById[id].disabled && (!defaultById[id].when || defaultById[id].when === windowsGuard)
