@@ -102,7 +102,7 @@ build_lua_bind_cache() {
     LUA_BIND_ARG_MAP["$cache_key"]="$arg"
   done < <(
     # -E keeps LUA_INIT and LUA_PATH from the environment out of the scan, which
-    # loads the user's config and the platform root's binds.
+    # loads the user's config.
     lua -E - <<'LUA'
 local modifiers = { SHIFT = 1, CTRL = 4, CONTROL = 4, ALT = 8, SUPER = 64 }
 
