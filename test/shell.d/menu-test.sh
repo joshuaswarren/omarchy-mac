@@ -291,7 +291,7 @@ assert(!defaultById['install.ai.crush'], 'menu removes Crush from Install > AI')
 // ship Linux builds for x86_64 alone hide only off x86_64, so any other `when:`
 // here is a row that went back to vanishing once installed.
 const windowsGuard = '[[ $(uname -m) == "x86_64" ]]'
-const x86OnlyInstalls = ['install.windows', 'install.browser.edge', 'install.service.dropbox', 'install.service.spotify']
+const x86OnlyInstalls = ['install.windows', 'install.browser.edge', 'install.service.dropbox', 'install.service.spotify', 'install.gaming.minecraft', 'install.gaming.heroic']
 assertDeepEqual(
   defaultItems
     .filter(item => item.id.startsWith('install.') && item.action && item.when)

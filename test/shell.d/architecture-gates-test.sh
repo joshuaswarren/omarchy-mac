@@ -26,6 +26,8 @@ default/omarchy/omarchy-menu.jsonc "label":"Windows","when":"[[ $(uname -m) == \
 default/omarchy/omarchy-menu.jsonc "label":"Edge","when":"[[ $(uname -m) == \"x86_64\" ]]"
 default/omarchy/omarchy-menu.jsonc "label":"Dropbox","when":"[[ $(uname -m) == \"x86_64\" ]]"
 default/omarchy/omarchy-menu.jsonc "label":"Spotify","when":"[[ $(uname -m) == \"x86_64\" ]]"
+default/omarchy/omarchy-menu.jsonc "label":"Minecraft","when":"[[ $(uname -m) == \"x86_64\" ]]"
+default/omarchy/omarchy-menu.jsonc "label":"Heroic (Epic Games)","when":"[[ $(uname -m) == \"x86_64\" ]]"
 
 # The menu reads uname once per guard batch for the row above; it decides nothing.
 shell/plugins/menu/MenuModel.js "uname -m"
