@@ -249,11 +249,12 @@ stage_luks_rekey() {
 
   passphrase=$(generate_passphrase)
   reset_boot_owner || fail "could not tell how this machine's boot chain is reset"
-  if [[ $RESET_BOOT == "platform" ]]; then
-    RESET_LUKS_AUTH=$current
-    RESET_LUKS_DEVICE=$device
-    RESET_THROWAWAY=$passphrase
-  else
+  RESET_LUKS_AUTH=$current
+  RESET_LUKS_DEVICE=$device
+  RESET_THROWAWAY=$passphrase
+  if [[ $RESET_BOOT == "generic" ]]; then
+    # Revoked like the platform's slot if the reset fails before activation.
+    RESET_LUKS_ADDED=1
     cryptsetup luksAddKey --key-file <(printf '%s' "$current") "$device" <(printf '%s' "$passphrase")
   fi
 
@@ -526,6 +527,8 @@ stage_full_reset() {
   # revokes the throwaway slot, so the old root goes back to @ first.
   if ! mv "$next" "$top/@"; then
     if mv "$top/$old" "$top/@"; then
+      [[ $RESET_BOOT == "platform" ]] ||
+        fail "could not activate the factory system; the current root is back at @, but its boot files were already rebuilt from the factory system: run 'sudo limine-update' before rebooting (see $LOG_FILE)"
       fail "could not activate the factory system; the current root is back at @ (see $LOG_FILE)"
     fi
     # Neither root is at @. Keep the staged one as well for recovery.
