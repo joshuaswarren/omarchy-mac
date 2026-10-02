@@ -89,6 +89,14 @@ mv() {
     echo "mv: the fixture refuses the switch" >&2
     return 1
   fi
+  if [[ -e $TMP/activate-fail && $1 == "$TOP_MNT/$NEXT_NAME" ]]; then
+    echo "mv: the fixture refuses the activation" >&2
+    return 1
+  fi
+  if [[ -e $TMP/restore-fail && $1 == "$TOP_MNT"/@omarchy-old-* ]]; then
+    echo "mv: the fixture refuses the restore" >&2
+    return 1
+  fi
   command mv "$@"
 }
 
@@ -237,6 +245,31 @@ grep -q 'luksAddKey' "$tmp/calls" && grep -qx 'reset-rollback' "$tmp/calls" && !
   fail "apple: a failed switch rolls back without committing" "$(cat "$tmp/calls")"
 untouched || fail "apple: a failed switch revokes the throwaway slot and keeps the previous root" "$(cat "$tmp/slots")"
 pass "apple: a failure before the switch revokes the slot it added and rolls the boot state back"
+
+# The old root already moved aside when the factory root cannot take @: the old
+# root goes back, and the reset is undone as if it failed before the switch.
+fixture
+touch "$tmp/activate-fail"
+if run reset apple; then fail "apple: a failed activation fails the reset"; fi
+grep -qx 'reset-rollback' "$tmp/calls" && ! grep -q '^reset-commit' "$tmp/calls" ||
+  fail "apple: a failed activation rolls back without committing" "$(cat "$tmp/calls")"
+untouched || fail "apple: a failed activation puts the previous root back at @ and revokes the throwaway slot" "$(ls "$tmp/top"; cat "$tmp/slots")"
+! compgen -G "$tmp/top/@omarchy-old-*" >/dev/null || fail "apple: a failed activation leaves no renamed root behind" "$(ls "$tmp/top")"
+grep -q 'the current root is back at @' "$tmp/screen" || fail "apple: a failed activation says the current root is back" "$(cat "$tmp/screen")"
+pass "apple: a failed activation puts the previous root back, rolls back and revokes the slot"
+
+# When the old root cannot go back either, neither root is at @: both survive
+# for recovery, and the screen names the rename that restores the machine.
+fixture
+touch "$tmp/activate-fail" "$tmp/restore-fail"
+if run reset apple; then fail "apple: a failed activation and restore fails the reset"; fi
+old=$(compgen -G "$tmp/top/@omarchy-old-*") || fail "apple: the previous root survives under its moved-aside name" "$(ls "$tmp/top")"
+[[ -e $old/old-system && -e $tmp/top/@omarchy-reset-next/factory-system && ! -e $tmp/top/@ ]] ||
+  fail "apple: a failed restore keeps both roots" "$(ls "$tmp/top")"
+grep -qx 'reset-rollback' "$tmp/calls" && [[ $(cat "$tmp/slots") == "0 $current_password" ]] ||
+  fail "apple: a failed restore still rolls the boot state back and revokes the slot" "$(cat "$tmp/calls" "$tmp/slots")"
+grep -q "rename ${old##*/} to @" "$tmp/screen" || fail "apple: a failed restore names the recovery rename" "$(cat "$tmp/screen")"
+pass "apple: a failed activation and restore keeps both roots and names the recovery rename"
 
 # A slot added but not confirmed is found by its key and revoked all the same.
 fixture

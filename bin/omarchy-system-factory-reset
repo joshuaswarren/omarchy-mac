@@ -521,9 +521,19 @@ stage_full_reset() {
   log "Activating the factory system"
   local old="@omarchy-old-$(date +%s)"
   mv "$top/@" "$top/$old"
+  # Until the factory root is at @ the reset is not committed: cleanup has the
+  # platform's boot package roll its boot state back to the old root and
+  # revokes the throwaway slot, so the old root goes back to @ first.
+  if ! mv "$next" "$top/@"; then
+    if mv "$top/$old" "$top/@"; then
+      fail "could not activate the factory system; the current root is back at @ (see $LOG_FILE)"
+    fi
+    # Neither root is at @. Keep the staged one as well for recovery.
+    swap_done=1
+    fail "could not activate the factory system or put the current root back; from a live USB, mount the Btrfs top level, rename $old to @, and rebuild its boot files if it does not boot"
+  fi
   # From here the old root is gone, so the reset's unlock must survive.
   reset_committed=1
-  mv "$next" "$top/@"
   swap_done=1
   sync
 
