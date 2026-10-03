@@ -7,7 +7,8 @@
 # PREFIX- ("t8103" covers every M1 board, "t6001-j316c" one board). A device
 # tree takes its overlays in C order of PREFIX/NAME. An overlay whose root node
 # has the string list "omarchy,skip-if-compatible" is left out of a device tree
-# that already has a node with one of those compatibles, so a kernel that gains
+# that already has an available node with one of those compatibles (Linux's
+# of_device_is_available(): no status, "okay" or "ok"), so a kernel that gains
 # the node wins. An overlay whose root node has the string "omarchy,opt-in"
 # applies only when that string is a line of
 # /etc/omarchy-platform/dtb-overlays.opt-in: the owner's choice for hardware
@@ -60,10 +61,31 @@ dtb_overlays_supported() {
   grep -Fqx -- ': ${DTBS:=$(/bin/ls -d /lib/modules/*-ARCH | sort -rV | head -1)/dtbs/*.dtb}' "$1"
 }
 
-# True when DTB has a node whose compatible list holds COMPATIBLE.
+# True when DTB has an available node whose compatible list holds COMPATIBLE.
+# Available is Linux's of_device_is_available(): the node has no status, or
+# its status is "okay" or "ok". A disabled node does not count.
 dtb_overlays_has_compatible() {
-  dtc -q -I dtb -O dts -o - "$1" 2>/dev/null |
-    grep -E '^[[:space:]]*compatible = ' | grep -Fq -- "\"$2\""
+  dtc -q -I dtb -O dts -o - "$1" 2>/dev/null | awk -v compatible="\"$2\"" '
+    {
+      if ($0 ~ /^[[:space:]]*\}[;]?[[:space:]]*$/) {
+        if (matched[depth] && (status[depth] == "" || status[depth] == "okay" ||
+          status[depth] == "ok")) {
+          found = 1
+          exit
+        }
+        delete matched[depth]
+        delete status[depth]
+        depth--
+      } else if ($0 ~ /\{[[:space:]]*$/) {
+        depth++
+      } else if ($0 ~ /^[[:space:]]*compatible[[:space:]]*=/ && index($0, compatible)) {
+        matched[depth] = 1
+      } else if ($0 ~ /^[[:space:]]*status[[:space:]]*=/ && match($0, /"[^"]*"/)) {
+        status[depth] = substr($0, RSTART + 1, RLENGTH - 2)
+      }
+    }
+    END { exit found ? 0 : 1 }
+  '
 }
 
 # Writes OUT: DTB with every overlay in OVERLAYS (newline-separated) that

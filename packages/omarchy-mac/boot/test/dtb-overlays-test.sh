@@ -120,6 +120,44 @@ mapfile -t result < <(dtb_overlays_apply "$tmp/out" "$dtbs/t8103-j293-kernel-ane
   fail "an overlay stays out of a device tree that already has its skip-if-compatible node"
 pass "a kernel device tree that has the node wins over the overlay"
 
+# Only an available node has the compatible: Linux's of_device_is_available()
+# rule is no status, "okay" or "ok"; a disabled node does not count.
+dtc -q -I dts -O dtb -o "$tmp/available.dtb" - <<'DTS'
+/dts-v1/;
+/ {
+  compatible = "apple,j293", "apple,t8103";
+  none@1000 { compatible = "apple,t8103-ane"; };
+  okay@1000 { compatible = "apple,t8103-ane"; status = "okay"; };
+  ok@1000 { compatible = "apple,t8103-ane"; status = "ok"; };
+};
+DTS
+dtb_overlays_has_compatible "$tmp/available.dtb" apple,t8103-ane ||
+  fail "a node without status, with \"okay\" or with \"ok\" has the compatible"
+for unavailable in disabled reserved; do
+  dtc -q -I dts -O dtb -o "$tmp/$unavailable.dtb" - <<DTS
+/dts-v1/;
+/ {
+  compatible = "apple,j293", "apple,t8103";
+  ane@1000 { compatible = "apple,t8103-ane"; status = "$unavailable"; };
+};
+DTS
+  ! dtb_overlays_has_compatible "$tmp/$unavailable.dtb" apple,t8103-ane ||
+    fail "a \"$unavailable\" node does not have the compatible"
+done
+pass "only a node with no status, \"okay\" or \"ok\" has the compatible"
+
+# A kernel that ships the node disabled does not keep the overlay out: the
+# overlay merges into the node and enables it in place.
+board_dtb t8103-j293-kernel-ane-disabled.dtb j293 t8103 \
+  'ane@2000 { compatible = "apple,t8103-ane"; reg = <0 0x2000 0 0x100>; status = "disabled"; };'
+mapfile -t result < <(dtb_overlays_apply "$tmp/out" "$dtbs/t8103-j293-kernel-ane-disabled.dtb")
+[[ ${result[0]} == "$tmp/out/t8103-j293-kernel-ane-disabled.dtb" ]] ||
+  fail "a disabled kernel node does not keep the overlay out: ${result[*]}"
+has_ane "${result[0]}" apple,t8103-ane || fail "the overlaid tree carries the overlay's node"
+[[ $(fdtget "${result[0]}" /soc/ane@2000 status) == okay ]] ||
+  fail "the overlay enables the disabled node in place"
+pass "a disabled kernel node does not keep the overlay out, and the overlay enables it"
+
 rm -rf "$overlays/t8103"
 overlay t8103-j293 board apple,t8103-ane
 mapfile -t result < <(dtb_overlays_apply "$tmp/out" "${stock[@]}")
@@ -151,7 +189,7 @@ rm -f "$overlays/t8103-j293/zz-broken.dtbo"
 # update-m1n1's side: the newest kernel's device trees, in C order, with the
 # overlaid copy in place of the one it replaces.
 mkdir -p "$root/lib/modules/6.1.0-1-ARCH/dtbs"
-rm -f "$dtbs/t8103-j293-kernel-ane.dtb"
+rm -f "$dtbs/t8103-j293-kernel-ane.dtb" "$dtbs/t8103-j293-kernel-ane-disabled.dtb"
 unset DTBS
 dtb_overlays_update_m1n1
 out=$root/run/omarchy-dtb-overlays
