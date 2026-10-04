@@ -8,8 +8,8 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 # after the HOOKS baseline and add the Asahi firmware and systemd unlock hooks
 # to it. The fixtures are the drop-ins omarchy-mac-boot 20260926-1.45 installs,
 # as read from an encrypted M1 Pro, byte for byte the same as
-# packages/omarchy-mac/boot/files/etc/mkinitcpio.conf.d in omacom/omarchy-mac at
-# f77d965e (MIT). The encryption drop-in leaves a line carrying
+# omarchy-mac-boot/files/etc/mkinitcpio.conf.d in omacom/omarchy-mac-pkgs at
+# 4399105 (MIT). The encryption drop-in leaves a line carrying
 # busybox encrypt alone, since that is a Mac unlocked through cryptdevice=, so
 # the baseline must give a Mac the systemd line.
 require_platform_fixtures "the Apple boot drop-ins on the HOOKS baseline"

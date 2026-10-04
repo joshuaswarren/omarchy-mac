@@ -134,7 +134,7 @@ A platform's runtime package describes its hardware in files under the platform 
 
 ## Apple Silicon
 
-`omarchy-mac-boot`, from omacom/omarchy-mac, implements the Apple boot operations as small entrypoints around its boot modules and installs them in `/usr/lib/omarchy/mac-boot`. `omarchy-mac`, from the same repository, implements `setup-system`, `setup-user`, `post-install` and `pre-remove` in `/usr/lib/omarchy/mac`. Their documentation describes each one. Nothing Apple-specific lives in Omarchy beyond the registration above.
+`omarchy-mac-boot`, from omacom/omarchy-mac-pkgs, implements the Apple boot operations as small entrypoints around its boot modules and installs them in `/usr/lib/omarchy/mac-boot`. `omarchy-mac`, from the same repository, implements `setup-system`, `setup-user`, `post-install` and `pre-remove` in `/usr/lib/omarchy/mac`. Their documentation describes each one. Nothing Apple-specific lives in Omarchy beyond the registration above.
 
 ## Qualcomm
 

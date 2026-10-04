@@ -6,7 +6,7 @@
 # comes as omarchy-mac's dependencies, so a new Mac driver needs no change
 # here; the rest are defaults an owner may remove.
 
-# The Mac's runtime and boot packages (omacom/omarchy-mac).
+# The Mac's runtime and boot packages (omacom/omarchy-mac-pkgs).
 omarchy-mac
 omarchy-mac-boot
 
