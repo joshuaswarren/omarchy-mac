@@ -131,9 +131,9 @@ ios)
   echo -e "Installing iOS development (Swift, xtool)...\n"
   repo="$HOME/.local/share/omarchy-apple-dev"
   if [[ -d $repo/.git ]]; then
-    git -C "$repo" pull --ff-only
+    git -C "$repo" pull --ff-only || exit 1
   else
-    git clone https://github.com/joshuaswarren/omarchy-apple-dev "$repo"
+    git clone https://github.com/joshuaswarren/omarchy-apple-dev "$repo" || exit 1
   fi
   "$repo/install-toolchain.sh"
   ;;
