@@ -1121,6 +1121,26 @@ reset_limine_config() {
   done
 }
 
+# When this machine already has its entry (the re-key or the hardware setup
+# just built the UKI and wrote it) and only other machine-ids' OS entries
+# linger, drop those with the entry tool: no template reset, no UKI rebuild.
+# Fails when that is not the case or the entries stay stale; the caller then
+# starts the menu over from the template and rebuilds.
+drop_foreign_limine_entries() {
+  local esp machine_id ids id
+  esp=$(esp_path)
+  machine_id=$(cat /etc/machine-id 2>/dev/null || true)
+  [[ -n $machine_id ]] && grep -q "machine-id=$machine_id" "$esp/limine.conf" 2>/dev/null || return 1
+  ids=$(grep -o 'machine-id=[0-9a-f]\{32\}' "$esp/limine.conf" | cut -d= -f2 | sort -u | grep -vx "$machine_id" || true)
+  [[ -n $ids ]] || return 1
+  for id in $ids; do
+    log_step "dropping the boot entry of machine-id $id"
+    limine-entry-tool --remove-entry "$id" --quiet || return 1
+    rm -rf "${esp:?}/$id"
+  done
+  ! limine_entries_stale
+}
+
 cleanup_oem_state() {
   # Keep groups + packages: omarchy-system-factory-reset stages the bundled Node
   # tarball from these live copies when the factory snapshot predates it.
@@ -1164,8 +1184,10 @@ run_provisioning() {
   if limine_entries_stale; then
     log_step "refreshing boot entries for the new machine identity"
     echo boot >"$STATE_FILE"
-    reset_limine_config
-    limine-update
+    if ! drop_foreign_limine_entries; then
+      reset_limine_config
+      limine-update
+    fi
   fi
 
   if luks_staged_unlock_remains; then
