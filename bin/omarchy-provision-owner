@@ -1141,8 +1141,13 @@ drop_foreign_limine_entries() {
   fi
   for id in $ids; do
     log_step "dropping the boot entry of machine-id $id"
+    # The directory goes first. If the ESP refuses the delete, the entry stays in the menu, so the fallback
+    # below still names this id and retries; a menu that already looks clean would hide the leftover.
+    if ! rm -rf "${esp:?}/$id"; then
+      log_step "could not delete $esp/$id"
+      return 1
+    fi
     limine-entry-tool --remove-entry "$id" --quiet || return 1
-    rm -rf "${esp:?}/$id"
   done
   ! limine_entries_stale
 }
