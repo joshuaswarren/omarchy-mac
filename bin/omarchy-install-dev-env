@@ -130,10 +130,21 @@ ios)
   # Apple's Xcode.xip; the installer says how to get it and how to finish.
   echo -e "Installing iOS development (Swift, xtool)...\n"
   repo="$HOME/.local/share/omarchy-apple-dev"
-  if [[ -d $repo/.git ]]; then
-    git -C "$repo" pull --ff-only || exit 1
-  else
-    git clone https://github.com/joshuaswarren/omarchy-apple-dev "$repo" || exit 1
+  # Pinned to a reviewed commit, so a later push to the repo's main branch cannot change what runs here.
+  # OMARCHY_APPLE_DEV_COMMIT=<40-hex hash> picks another commit, after you have read it.
+  commit="${OMARCHY_APPLE_DEV_COMMIT:-d993142030fb3ace65f12c3ad04d3ee15fccb7eb}"
+  if [[ ! $commit =~ ^[0-9a-f]{40}$ ]]; then
+    echo "OMARCHY_APPLE_DEV_COMMIT must be a full 40-character commit hash" >&2
+    exit 1
+  fi
+  [[ -d $repo/.git ]] || git init -q "$repo" || exit 1
+  git -C "$repo" remote get-url origin >/dev/null 2>&1 ||
+    git -C "$repo" remote add origin https://github.com/joshuaswarren/omarchy-apple-dev || exit 1
+  git -C "$repo" fetch -q --depth 1 origin "$commit" || exit 1
+  git -C "$repo" checkout -q --detach FETCH_HEAD || exit 1
+  if [[ $(git -C "$repo" rev-parse HEAD) != "$commit" ]]; then
+    echo "omarchy-apple-dev checkout is not $commit" >&2
+    exit 1
   fi
   "$repo/install-toolchain.sh"
   ;;
