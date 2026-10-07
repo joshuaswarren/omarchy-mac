@@ -87,6 +87,18 @@ refresh || fail "the refresh succeeds" "$(cat "$tmp/log")"
 [[ $(tail -n 1 "$tmp/ran") == update ]] || fail "a failed entry tool falls back to the rebuild" "$(cat "$tmp/ran")"
 pass "a failed entry tool falls back to starting the menu over"
 
+# The ESP refuses to delete the other machine-id's directory: the entry tool does not run, so the entry stays in the
+# menu and the fallback still names that id (a menu that already looked clean would hide the leftover directory).
+fixture
+{ printf 'timeout: 3\n'; entry "$own" aaaa; entry "$foreign" bbbb; } >"$esp/limine.conf"
+rm() { [[ ${*: -1} == "$esp/$foreign" ]] && return 1; command rm "$@"; }
+refresh || fail "the refresh finishes through the fallback" "$(cat "$tmp/log")"
+unset -f rm
+! grep -q '^entry-tool' "$tmp/ran" || fail "the entry tool does not run after a refused delete" "$(cat "$tmp/ran")"
+grep -q "could not delete $esp/$foreign" "$tmp/log" || fail "the refused delete is logged" "$(cat "$tmp/log")"
+[[ $(tail -n 1 "$tmp/ran") == update ]] || fail "a refused delete falls back to the rebuild" "$(cat "$tmp/ran")"
+pass "a refused ESP delete is not reported as a clean refresh"
+
 # Nothing stale: nothing runs.
 fixture
 { printf 'timeout: 3\n'; entry "$own" aaaa; } >"$esp/limine.conf"
