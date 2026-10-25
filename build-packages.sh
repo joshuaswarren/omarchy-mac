@@ -106,11 +106,22 @@ keep_apple_silicon_mkinitcpio_drop_ins() {
   local pkgbuild="$1"
   local upstream_line='rm -rf "$pkgdir/etc/limine-entry-tool.d" "$pkgdir/etc/mkinitcpio.conf.d"'
 
-  # Fail loudly if upstream restructures this. Silently not matching would
-  # ship a package missing the asahi hook, which is the failure this exists
-  # to prevent and the one nobody notices until the next kernel update.
-  grep -qF "$upstream_line" "$pkgbuild" ||
+  # Upstream now ships the Limine and mkinitcpio drop-ins on aarch64 too and
+  # no longer deletes them, so there is nothing to narrow. Accept that only
+  # when the PKGBUILD really lists the drop-in and removes nothing from
+  # /etc/mkinitcpio.conf.d.
+  if ! grep -qF "$upstream_line" "$pkgbuild"; then
+    if grep -qF "etc/mkinitcpio.conf.d/omarchy_hooks.conf" "$pkgbuild" &&
+      ! grep -qE 'rm [^#]*"\$pkgdir/etc/mkinitcpio\.conf\.d"' "$pkgbuild"; then
+      log "omarchy-settings already ships /etc/mkinitcpio.conf.d; nothing to keep"
+      return 0
+    fi
+    # Fail loudly if upstream restructures this some other way. Silently not
+    # matching would ship a package missing the asahi hook, which is the
+    # failure this exists to prevent and the one nobody notices until the
+    # next kernel update.
     fail "omarchy-settings PKGBUILD no longer deletes /etc/mkinitcpio.conf.d as expected; re-check it against $pkgbuild"
+  fi
 
   sed -i 's| "\$pkgdir/etc/mkinitcpio\.conf\.d"||' "$pkgbuild"
 
