@@ -34,7 +34,7 @@ cmp -s "$test_tmp/original-backup" "$test_tmp/pacman.conf.bak" || fail 'channel 
 pass 'preparation after channel replacement preserves the original backup'
 
 mapfile -t targets < <(omarchy_arm_package_targets)
-[[ ${targets[*]} == "omarchy/hyprland omarchy/hyprtoolkit omarchy/hyprland-guiutils" ]] || fail 'only approved packages selected'
+[[ ${targets[*]} == "omarchy/hyprland omarchy/omarchy-themes-intros" ]] || fail 'only approved packages selected'
 pass 'Aquamarine remains a regular-repository dependency'
 
 # Exercise the real default-package loop after the compatibility transaction.
@@ -49,7 +49,7 @@ package_is_unavailable_here() { return 1; }
 pacman() { [[ $1 == "-Q" ]] && printf '%s\n' "$2" >> "$test_tmp/checked"; }
 yay() { printf '%s\n' "$*" >> "$test_tmp/yay"; }
 install_default_package_set
-for package in hyprland hyprtoolkit hyprland-guiutils; do
+for package in hyprland; do
   if grep -qxF "$package" "$ROOT/install/omarchy-base.packages"; then
     grep -qxF "$package" "$test_tmp/checked" || fail "$package availability checked"
   fi
