@@ -2,7 +2,7 @@
 
 # Shared by the standalone installer and installed package update commands.
 omarchy_arm_package_targets() {
-  printf '%s\n' omarchy/hyprland
+  printf '%s\n' omarchy/hyprland omarchy/omarchy-themes-intros
 }
 
 omarchy_arm_package_is_selected() {

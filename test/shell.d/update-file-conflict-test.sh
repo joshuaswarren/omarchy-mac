@@ -39,7 +39,7 @@ if [[ $1 == -Qo ]]; then
 fi
 
 # Every initial transaction and retry must retain the explicit ARM targets.
-[[ " $* " == *" omarchy/hyprland "* ]] || exit 99
+[[ " $* " == *" omarchy/hyprland omarchy/omarchy-themes-intros "* ]] || exit 99
 
 attempt=$(($(cat "$PACMAN_ATTEMPTS") + 1))
 echo "$attempt" >"$PACMAN_ATTEMPTS"
