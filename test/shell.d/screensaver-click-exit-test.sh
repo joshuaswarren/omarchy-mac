@@ -42,7 +42,7 @@ cat >"$WORK/bin/pkill" <<'STUB'
 mypgid=$(ps -o pgid= -p $$)
 pids=$(pgrep "$@") || exit 0
 for pid in $pids; do
-  [[ $(ps -o pgid= -p "$pid") == "$mypgid" ]] && kill "$pid" 2>/dev/null
+  [[ $(ps -o pgid= -p "$pid") == $mypgid ]] && kill "$pid" 2>/dev/null
 done
 exit 0
 STUB
