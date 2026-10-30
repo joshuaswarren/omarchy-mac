@@ -7,4 +7,8 @@ echo "Install omarchy-ane, the Apple Neural Engine tools, on Apple Silicon Macs"
 omarchy-hw-aarch64-apple || exit 0
 omarchy-pkg-present omarchy-ane && exit 0
 
+# A Mac whose channel does not carry the package yet must not stop the queue:
+# a failing migration stays pending and holds back every migration after it.
+pacman -Si omarchy-ane &>/dev/null || exit 0
+
 omarchy-pkg-add omarchy-ane
