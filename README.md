@@ -143,3 +143,7 @@ and the Omarchy contributors for the desktop.
 
 You can support the upstream project at [Buy Me a Coffee](https://buymeacoffee.com/malik2015no).
 See [LICENSE](LICENSE) for the license.
+
+## Contributors
+
+Everyone credited so far: [CONTRIBUTORS.md](CONTRIBUTORS.md).
