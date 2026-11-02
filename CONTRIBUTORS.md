@@ -80,6 +80,7 @@
 - [@chriopter](https://github.com/chriopter)
 - [@Chris24680](https://github.com/Chris24680)
 - [@chrislewis](https://github.com/chrislewis)
+- [@claude](https://github.com/claude)
 - [@Cliffback](https://github.com/Cliffback)
 - [@coolbotic](https://github.com/coolbotic)
 - [@cossssmin](https://github.com/cossssmin)
@@ -435,9 +436,9 @@
 - [@yuters](https://github.com/yuters)
 - [@zaborowskimichal](https://github.com/zaborowskimichal)
 - [@Ziryt](https://github.com/Ziryt)
-
-_Listed are GitHub accounts only. Anonymous (email-only) commit authors
-cannot be enumerated through the GitHub API and are credited by hand in
+_Linked GitHub accounts only. Anonymous (unlinked) commit authors are
+enumerable through the API (anon=true) but are identified there only by
+name/email, which this registry does not publish; credit them by hand in
 the sections above where known._
 
 <!-- END GENERATED CONTRIBUTORS -->
