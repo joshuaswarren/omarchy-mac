@@ -134,6 +134,14 @@ assertDeepEqual(bar.notchSlotLayout([100, 0, 247], 300, 647), [
 ], 'a hidden control between two others leaves no blank slot')
 assertDeepEqual(bar.notchSlotLayout([], 300, 647), [], 'an empty center section stays empty')
 
+// Slots are packed against the cutout side, so a control that overflows also
+// drops every control before it, even one that would fit on its own.
+assertDeepEqual(bar.notchSlotLayout([50, 400, 100], 300, 647), [
+  { x: 97, visible: false },
+  { x: 147, visible: false },
+  { x: 547, visible: true }
+], 'a control that overflows drops every control before it')
+
 // A slot dropped for overflow must stay visible: hiding it makes every child
 // report hidden, so a self-hiding module measures zero and the slot flaps back.
 // Measuring by the slot's own implicit width is what keeps a hidden module from
@@ -147,10 +155,10 @@ assert(/enabled: placed\b/.test(bounded) && /opacity: placed \? 1 : 0/.test(boun
 assert(!/visible: !!placement/.test(bounded), 'a dropped slot is not hidden, which would collapse its own measure')
 
 // Clicks on the bar are forwarded to a widget's own buttons by a search over
-// every registered target. A button inside a slot dropped for overflow is
-// transparent but keeps its width, so it can lie under a visible control. Qt
-// reports a child of a disabled parent as disabled, so the search has to skip
-// disabled targets. This runs the real function from Bar.qml.
+// every registered target. The slot of a dropped control is zero wide and
+// transparent, but its buttons keep their own widths, so one can lie under a
+// visible control. Qt reports a child of a disabled parent as disabled, so the
+// search has to skip disabled targets. This runs the real function from Bar.qml.
 const clickableSource = barSource.match(/function moduleTargetClickable\(target\) \{[\s\S]*?\n  \}\n/)
 assert(!!clickableSource, 'the click target filter is found in Bar.qml')
 const clickable = new Function(clickableSource[0] + '; return moduleTargetClickable')()
@@ -159,4 +167,47 @@ assertEqual(!!clickable(pressable({})), true, 'an enabled, drawn button takes cl
 assertEqual(!!clickable(pressable({ enabled: false })), false, 'a disabled button, such as one in a dropped slot, takes no clicks')
 assertEqual(!!clickable(pressable({ opacity: 0 })), false, 'a transparent button takes no clicks')
 assertEqual(!!clickable(pressable({ visible: false })), false, 'a hidden button takes no clicks')
+
+// The keyboard panel forwards clicks with its own search over the same
+// targets, so it has to skip a disabled target for the same reason. This runs
+// the real function from KeyboardPanel.qml.
+const panelSource = fs.readFileSync(root + '/shell/Ui/KeyboardPanel.qml', 'utf8')
+const pressSource = panelSource.match(/function pressTargetAt\(px, py\) \{[\s\S]*?\n    \}\n/)
+assert(!!pressSource, 'the keyboard panel click search is found')
+const makePress = new Function('root', 'barPoint', pressSource[0] + '; return pressTargetAt')
+const pressAt = (targets) => makePress({
+  anchorWindow: { contentItem: {}, itemPosition: () => ({ x: 0, y: 0 }) },
+  bar: { clickTargets: targets }
+}, (x, y) => ({ x, y }))(5, 5)
+const button = (overrides) => Object.assign({ visible: true, opacity: 1, enabled: true, width: 20, height: 20, triggerPress() {}, mapToItem() {} }, overrides)
+const under = button({})
+const dropped = button({ enabled: false })
+assertEqual(pressAt([under]), under, 'the keyboard panel presses an enabled button')
+assertEqual(pressAt([under, dropped]), under, 'a button in a dropped slot does not take the click from the control under it')
+assertEqual(pressAt([dropped]), null, 'the keyboard panel presses no disabled button')
+
+// A dropped slot must also close a panel that opens afterwards, such as one a
+// widget opens through its own IPC handler, not only the panel open when it drops.
+const closeSource = bounded.match(/function closeWhenDropped\(\) \{[\s\S]*?\n            \}\n/)
+assert(!!closeSource, 'the bounded slot closes a panel on a dropped slot')
+const makeClose = new Function('placed', 'panelOpen', 'activeItem', closeSource[0] + '; return closeWhenDropped')
+const closesPanel = (placed, panelOpen) => {
+  let closed = false
+  makeClose(placed, panelOpen, { close() { closed = true } })()
+  return closed
+}
+assertEqual(closesPanel(false, true), true, 'an open panel on a dropped slot is closed')
+assertEqual(closesPanel(true, true), false, 'an open panel on a placed slot stays open')
+assertEqual(closesPanel(false, false), false, 'a dropped slot with no panel has nothing to close')
+assert(/onPlacedChanged: closeWhenDropped\(\)/.test(bounded), 'dropping a slot closes its open panel')
+assert(/onPanelOpenChanged: closeWhenDropped\(\)/.test(bounded), 'a panel that opens on a dropped slot is closed')
+
+// The placement wiring has no runtime test off the device, so each expression
+// the layout depends on is pinned in the source.
+assert(/anchors\.rightMargin: parent\.width - centerRoot\.cutoutLeft \+ Style\.space\(4\)/.test(barSource), 'the center list ends a gap before the cutout')
+assert(/widthLimit: Math\.max\(0, centerRoot\.cutoutLeft - centerRoot\.leftControlsRight - 2 \* Style\.space\(4\)\)/.test(barSource), 'the center list spans the space between the left controls and the cutout')
+assert(/sourceComponent: root\.vertical \? verticalCenterModules\s*: centerRoot\.cutoutLeft > 0 \? notchCenterModules : horizontalCenterModules/.test(barSource), 'only a horizontal bar with a cutout uses the notch layout')
+assert(/cutoutLeft: barWindow\.cutoutLeft/.test(barSource), 'the center section reads the window cutout edge')
+assert(/leftControlsRight: leftModules\.x \+ leftModules\.width/.test(barSource), 'the center section starts after the left controls')
+assert(/panelMonitor && panelMonitor\.lastIpcObject \?/.test(barSource), 'the panel mode is read only once Hyprland reports it')
 JS

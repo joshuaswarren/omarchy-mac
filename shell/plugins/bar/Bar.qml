@@ -1627,9 +1627,14 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             opacity: placed ? 1 : 0
             enabled: placed
-            onPlacedChanged: {
+            // A panel can open on a dropped slot after the drop, for example
+            // through the widget's own IPC handler, so closing it on the drop
+            // alone is not enough.
+            function closeWhenDropped() {
               if (!placed && panelOpen && activeItem && typeof activeItem.close === "function") activeItem.close()
             }
+            onPlacedChanged: closeWhenDropped()
+            onPanelOpenChanged: closeWhenDropped()
           }
         }
       }
