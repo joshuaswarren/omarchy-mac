@@ -163,10 +163,16 @@ function pickDrawnSlot(slots) {
 // monitor's copy wins, so a summon lands where the user is working instead of
 // on whichever output registered its slot first. Neither narrowing applies on
 // a single monitor, or when the focused output has no bar of its own.
+//
+// A slot dropped beside a camera cutout stays mounted, transparent and
+// disabled. It is never a target, so another output's drawn copy wins, and
+// with no drawn copy anywhere there is no panel to summon.
 function pickPanelSlot(candidates, focusedScreen) {
-  var rows = Array.isArray(candidates) ? candidates : []
-  var pool = rows.filter(function(row) { return row && row.opened === true })
-  if (pool.length === 0) pool = rows.filter(function(row) { return !!row })
+  var rows = (Array.isArray(candidates) ? candidates : []).filter(function(row) {
+    return !!row && !(row.slot && row.slot.enabled === false)
+  })
+  var pool = rows.filter(function(row) { return row.opened === true })
+  if (pool.length === 0) pool = rows
 
   var focused = String(focusedScreen || "")
   if (focused) {

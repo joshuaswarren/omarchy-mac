@@ -184,6 +184,26 @@ assertEqual(
   drawn,
   'bar still picks the drawn slot among the focused monitor copies'
 )
+
+// A slot dropped beside the camera cutout stays mounted but is transparent and
+// disabled, so a hotkey must not summon a panel on it. Another output's drawn
+// copy is the right target, and with no drawn copy anywhere there is no panel.
+const dropped = { moduleName: 'omarchy.audio', visible: true, width: 0, height: 81, enabled: false }
+assertEqual(
+  bar.pickPanelSlot([row(dropped, 'eDP-1'), row(external, 'DP-1')], 'eDP-1'),
+  external,
+  'bar summons another output copy when the focused output dropped its own'
+)
+assertEqual(
+  bar.pickPanelSlot([row(dropped, 'eDP-1')], 'eDP-1'),
+  null,
+  'bar summons no panel when every copy is dropped beside the notch'
+)
+assertEqual(
+  bar.pickPanelSlot([row(dropped, 'eDP-1', true), row(external, 'DP-1')], 'eDP-1'),
+  external,
+  'bar never routes a panel hotkey to a dropped copy, open or not'
+)
 assertEqual(bar.pickPanelSlot([], 'DP-1'), null, 'bar reports no panel slot when there are none')
 assertEqual(bar.pickPanelSlot(null, 'DP-1'), null, 'bar tolerates a missing panel slot list')
 assert(
