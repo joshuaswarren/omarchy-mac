@@ -1,0 +1,78 @@
+#!/bin/bash
+
+# omarchy:summary=Set the display backlight from the ambient light sensor.
+# omarchy:args=[--once]
+# omarchy:examples=omarchy-brightness-auto | omarchy-brightness-auto --once
+
+# Apple AOP also exposes the lid-angle sensor (aop-sensors-las): read sensors named als first.
+sensors=()
+for dir in /sys/bus/iio/devices/iio:device*; do
+  [[ -e $dir/in_illuminance_input ]] || continue
+  if [[ $(cat "$dir/name" 2>/dev/null) == *als* ]]; then
+    sensors=("$dir/in_illuminance_input" "${sensors[@]}")
+  else
+    sensors+=("$dir/in_illuminance_input")
+  fi
+done
+(( ${#sensors[@]} )) || exit 0
+device="$(omarchy-hw-display)" || exit 0
+state="${XDG_RUNTIME_DIR:-/tmp}/omarchy-brightness-auto.state"
+
+# 5% in the dark to 100% at 1000 lux, on a log scale, as the eye sees light.
+curve() {
+  awk -v lux="$1" 'BEGIN { p = 5 + 95 * log(lux + 1) / log(1001); if (p > 100) p = 100; printf "%d\n", p + 0.5 }'
+}
+
+# A sensor without calibration fails the read (ENODATA): try the next one.
+lux() {
+  local sensor value
+  for sensor in "${sensors[@]}"; do
+    value=$(cat "$sensor" 2>/dev/null) || continue
+    [[ $value =~ ^[0-9]+(\.[0-9]+)?$ ]] && echo "$value" && return 0
+  done
+  return 1
+}
+
+brightness() {
+  brightnessctl -d "$device" -m 2>/dev/null | awk -F, '{ gsub("%", "", $4); print $4; found=1 } END{ exit !found }'
+}
+
+step() {
+  local light now base last saved offset=0 target
+
+  light=$(lux) || return 0
+  now=$(brightness) || return 0
+  [[ $now =~ ^[0-9]+$ ]] || return 0
+  base=$(curve "$light")
+
+  if read -r last saved 2>/dev/null <"$state" && [[ $last =~ ^[0-9]+$ && $saved =~ ^-?[0-9]+$ ]]; then
+    offset=$saved
+    # The backlight moved since the last step (keys, idle dim): keep that level
+    # as an offset from the curve, so later light changes move it, not undo it.
+    if (( now != last )); then
+      offset=$(( now - base ))
+    fi
+  fi
+
+  target=$(( base + offset ))
+  (( target < 1 )) && target=1
+  (( target > 100 )) && target=100
+
+  # Within 3% is sensor noise, not worth a visible step.
+  if (( target - now > 3 || now - target > 3 )); then
+    brightnessctl -d "$device" set "$target%" >/dev/null || return 0
+    # Record the level the device reports, so its rounding is not a user move.
+    now=$(brightness) || return 0
+  fi
+  echo "$now $offset" >"$state"
+}
+
+if [[ ${1:-} == "--once" ]]; then
+  step
+  exit 0
+fi
+
+while :; do
+  step
+  sleep 2
+done

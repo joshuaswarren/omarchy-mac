@@ -3,8 +3,10 @@
 # Build the Omarchy packages for Apple Silicon from this checkout.
 #
 # omarchy, omarchy-settings, omarchy-keyring, and ttf-jetbrains-mono-nerd-basic
-# are all arch=any, so they need no architecture-specific build. The only Apple
-# Silicon delta is the limine bootloader stack, patched out below.
+# are all arch=any, so they need no architecture-specific build.
+# omarchy-speedtest is a Go binary that omarchy depends on and no aarch64
+# repository ships, so it is compiled here. The only Apple Silicon delta is the
+# limine bootloader stack, patched out below.
 #
 # OMARCHY_PKGREL bumps pkgrel on omarchy and omarchy-settings only, so a Mac
 # hotfix can ship as 4.0.1-2 without waiting for an upstream 4.0.2 tag. Leave
@@ -29,6 +31,7 @@ readonly packages=(
   omarchy-keyring
   ttf-jetbrains-mono-nerd-basic
   omarchy-settings
+  omarchy-speedtest
   omarchy
 )
 
@@ -138,12 +141,17 @@ install_build_dependencies() {
   local pkgbuild_source="$1" package
   local -a build_dependencies=()
 
+  # Source each PKGBUILD in a subshell, as makepkg does (no nounset, CARCH set),
+  # so one-line and multi-line makedepends=() arrays both parse.
   for package in "${packages[@]}"; do
-    while read -r dependency; do
-      [[ -n $dependency ]] || continue
-      build_dependencies+=("$dependency")
-    done < <(sed -n '/^makedepends=(/,/^)/p' "$pkgbuild_source/$package/PKGBUILD" |
-      sed '1d;$d' | tr -d "'\"" | tr -d ' ')
+    mapfile -t -O "${#build_dependencies[@]}" build_dependencies < <(
+      set +u
+      # shellcheck disable=SC2034
+      CARCH="$(uname -m)"
+      # shellcheck disable=SC1090,SC2154
+      source "$pkgbuild_source/$package/PKGBUILD" &&
+        for dependency in "${makedepends[@]}"; do printf '%s\n' "$dependency"; done
+    )
   done
 
   (( ${#build_dependencies[@]} )) || return 0
