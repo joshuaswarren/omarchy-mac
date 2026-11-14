@@ -89,13 +89,22 @@ pass "an unreadable sensor leaves the backlight alone"
 
 # The unit starts only on a sensor that gives a reading: a driver without
 # calibration exposes the file but returns ENODATA.
+grep -Fqx 'ExecCondition=/usr/bin/omarchy-brightness-auto --available' \
+  "$ROOT/default/systemd/user/omarchy-brightness-auto.service" ||
+  fail "the unit starts only when --available finds a reading"
 available() {
-  PATH="$mock_bin:$PATH" XDG_RUNTIME_DIR="$runtime" "$auto" --available
+  PATH="$mock_bin:$PATH" XDG_RUNTIME_DIR="$runtime" timeout 5 "$auto" --available
+}
+# Exit 1 is a skip for ExecCondition; a timeout (124) is a hang, not a skip.
+unavailable() {
+  local rc=0
+  available || rc=$?
+  ((rc == 1))
 }
 reset 50
-! available || fail "no light sensor is not available"
+unavailable || fail "no light sensor is not available"
 mkdir -p "$iio/iio:device0/in_illuminance_input"
-! available || fail "an unreadable sensor is not available"
+unavailable || fail "an unreadable sensor is not available"
 sensor 1 30
 available || fail "a readable sensor is available"
 [[ ! -e $writes ]] || fail "--available leaves the backlight alone"
