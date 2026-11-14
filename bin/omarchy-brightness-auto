@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # omarchy:summary=Set the display backlight from the ambient light sensor.
-# omarchy:args=[--once]
-# omarchy:examples=omarchy-brightness-auto | omarchy-brightness-auto --once
+# omarchy:args=[--once|--available]
+# omarchy:examples=omarchy-brightness-auto | omarchy-brightness-auto --once | omarchy-brightness-auto --available
 
 # Apple AOP also exposes the lid-angle sensor (aop-sensors-las): read sensors named als first.
 sensors=()
@@ -14,8 +14,11 @@ for dir in /sys/bus/iio/devices/iio:device*; do
     sensors+=("$dir/in_illuminance_input")
   fi
 done
-(( ${#sensors[@]} )) || exit 0
-device="$(omarchy-hw-display)" || exit 0
+# --available exits 1 when there is nothing to drive, so the unit stays inactive.
+none=0
+[[ ${1:-} == "--available" ]] && none=1
+(( ${#sensors[@]} )) || exit "$none"
+device="$(omarchy-hw-display)" || exit "$none"
 state="${XDG_RUNTIME_DIR:-/tmp}/omarchy-brightness-auto.state"
 
 # 5% in the dark to 100% at 1000 lux, on a log scale, as the eye sees light.
@@ -66,6 +69,11 @@ step() {
   fi
   echo "$now $offset" >"$state"
 }
+
+if [[ ${1:-} == "--available" ]]; then
+  lux >/dev/null
+  exit
+fi
 
 if [[ ${1:-} == "--once" ]]; then
   step
