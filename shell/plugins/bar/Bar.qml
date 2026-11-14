@@ -782,6 +782,7 @@ Item {
     return target
       && target.visible !== false
       && target.opacity !== 0
+      && target.enabled !== false
       && target.interactive !== false
       && target.pressable !== false
       && target.concealed !== true

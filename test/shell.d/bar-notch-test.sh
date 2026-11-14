@@ -145,4 +145,18 @@ assert(/measuredWidth: implicitWidth\b/.test(bounded), 'a bounded slot measures 
 assert(!/measuredWidth: activeItem/.test(bounded), 'a bounded slot does not measure its widget regardless of that widget being hidden')
 assert(/enabled: placed\b/.test(bounded) && /opacity: placed \? 1 : 0/.test(bounded), 'a dropped slot takes no input and draws nothing')
 assert(!/visible: !!placement/.test(bounded), 'a dropped slot is not hidden, which would collapse its own measure')
+
+// Clicks on the bar are forwarded to a widget's own buttons by a search over
+// every registered target. A button inside a slot dropped for overflow is
+// transparent but keeps its width, so it can lie under a visible control. Qt
+// reports a child of a disabled parent as disabled, so the search has to skip
+// disabled targets. This runs the real function from Bar.qml.
+const clickableSource = barSource.match(/function moduleTargetClickable\(target\) \{[\s\S]*?\n  \}\n/)
+assert(!!clickableSource, 'the click target filter is found in Bar.qml')
+const clickable = new Function(clickableSource[0] + '; return moduleTargetClickable')()
+const pressable = (overrides) => Object.assign({ visible: true, opacity: 1, enabled: true, triggerPress() {} }, overrides)
+assertEqual(!!clickable(pressable({})), true, 'an enabled, drawn button takes clicks')
+assertEqual(!!clickable(pressable({ enabled: false })), false, 'a disabled button, such as one in a dropped slot, takes no clicks')
+assertEqual(!!clickable(pressable({ opacity: 0 })), false, 'a transparent button takes no clicks')
+assertEqual(!!clickable(pressable({ visible: false })), false, 'a hidden button takes no clicks')
 JS
