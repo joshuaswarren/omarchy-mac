@@ -107,6 +107,17 @@ run_auto
 [[ $(level) == "23" ]] || fail "the user's offset follows the light down (got $(level))"
 pass "a level the user sets is kept as an offset from the curve"
 
+# ALT+brightness steps 1% at a time: each press is a choice, however small.
+reset 50
+sensor 0 25
+echo "50 0" >"$runtime/omarchy-brightness-auto.state"
+for step in 49 48 47 46; do
+  echo "$step" >"$level_file"
+  run_auto
+done
+[[ ! -e $writes ]] || fail "1% steps are kept, not pulled back to the curve (wrote $(cat "$writes"))"
+pass "1% steps are kept, not pulled back to the curve"
+
 # A corrupt state file counts as no state.
 reset 50
 sensor 0 0

@@ -40,7 +40,7 @@ step() {
     offset=$saved
     # The backlight moved since the last step (keys, idle dim): keep that level
     # as an offset from the curve, so later light changes move it, not undo it.
-    if (( now - last > 2 || last - now > 2 )); then
+    if (( now != last )); then
       offset=$(( now - base ))
     fi
   fi
@@ -52,7 +52,8 @@ step() {
   # Within 3% is sensor noise, not worth a visible step.
   if (( target - now > 3 || now - target > 3 )); then
     brightnessctl -d "$device" set "$target%" >/dev/null || return 0
-    now=$target
+    # Record the level the device reports, so its rounding is not a user move.
+    now=$(brightness) || return 0
   fi
   echo "$now $offset" >"$state"
 }
