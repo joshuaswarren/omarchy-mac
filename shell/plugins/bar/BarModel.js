@@ -312,6 +312,10 @@ function cutoutLeftEdge(cutouts, position, screenName, logicalWidth, logicalHeig
   return width > 0 ? Math.floor((logicalWidth - width) / 2) : 0
 }
 
+// Places whole controls between `left` and `right`, packed against `right`.
+// A control that does not fit is not visible, and neither is any control
+// before it, even one that would fit on its own. A zero-width control takes
+// no space and is never visible.
 function notchSlotLayout(widths, left, right) {
   var slots = new Array(widths.length)
   var x = right
