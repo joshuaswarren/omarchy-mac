@@ -141,12 +141,17 @@ install_build_dependencies() {
   local pkgbuild_source="$1" package
   local -a build_dependencies=()
 
+  # Source each PKGBUILD in a subshell, as makepkg does (no nounset, CARCH set),
+  # so one-line and multi-line makedepends=() arrays both parse.
   for package in "${packages[@]}"; do
-    while read -r dependency; do
-      [[ -n $dependency ]] || continue
-      build_dependencies+=("$dependency")
-    done < <(sed -n '/^makedepends=(/,/^)/p' "$pkgbuild_source/$package/PKGBUILD" |
-      sed '1d;$d' | tr -d "'\"" | tr -d ' ')
+    mapfile -t -O "${#build_dependencies[@]}" build_dependencies < <(
+      set +u
+      # shellcheck disable=SC2034
+      CARCH="$(uname -m)"
+      # shellcheck disable=SC1090,SC2154
+      source "$pkgbuild_source/$package/PKGBUILD" &&
+        for dependency in "${makedepends[@]}"; do printf '%s\n' "$dependency"; done
+    )
   done
 
   (( ${#build_dependencies[@]} )) || return 0
