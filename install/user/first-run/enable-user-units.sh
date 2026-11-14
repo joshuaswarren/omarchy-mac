@@ -19,4 +19,5 @@ systemctl --user enable --now \
   omarchy-migrate-notify.service \
   omarchy-fcitx5.service \
   omarchy-crash-watch.service \
-  omarchy-brightness-keyboard-auto.service
+  omarchy-brightness-keyboard-auto.service \
+  omarchy-brightness-auto.service
