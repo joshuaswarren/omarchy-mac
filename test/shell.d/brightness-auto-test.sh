@@ -87,6 +87,20 @@ run_auto
 [[ $(level) == "100" ]] || fail "a readable second sensor is used after an unreadable one (got $(level))"
 pass "an unreadable sensor leaves the backlight alone"
 
+# The unit starts only on a sensor that gives a reading: a driver without
+# calibration exposes the file but returns ENODATA.
+available() {
+  PATH="$mock_bin:$PATH" XDG_RUNTIME_DIR="$runtime" "$auto" --available
+}
+reset 50
+! available || fail "no light sensor is not available"
+mkdir -p "$iio/iio:device0/in_illuminance_input"
+! available || fail "an unreadable sensor is not available"
+sensor 1 30
+available || fail "a readable sensor is available"
+[[ ! -e $writes ]] || fail "--available leaves the backlight alone"
+pass "--available needs a sensor that gives a reading"
+
 # Apple AOP also exposes the lid-angle sensor next to the light sensor.
 reset 50
 sensor 0 1000
