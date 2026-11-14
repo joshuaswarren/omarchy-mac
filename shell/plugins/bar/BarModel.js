@@ -570,9 +570,26 @@ function parseCutouts(text) {
     var top = Number(panel.top)
     if (typeof panel.connector !== "string" || panel.connector === "") continue
     if (!(width > 0) || !(height > 0) || !(top > 0) || top >= height) continue
-    cutouts.push({ connector: panel.connector, width: width, height: height, top: top })
+    var cutout = { connector: panel.connector, width: width, height: height, top: top }
+    if (Number.isInteger(panel.cutoutWidth) && panel.cutoutWidth > 0 && panel.cutoutWidth < width)
+      cutout.cutoutWidth = panel.cutoutWidth
+    cutouts.push(cutout)
   }
   return cutouts
+}
+
+function cutoutLeftEdge(cutouts, position, screenName, logicalWidth, logicalHeight, mode) {
+  if (position !== "top" || !(logicalWidth > 0) || !(logicalHeight > 0)) return 0
+  if (!mode || !(mode.width > 0) || !(mode.height > 0) || (mode.transform !== 0 && mode.transform !== 4)) return 0
+  if ((mode.width > mode.height) !== (logicalWidth > logicalHeight)) return 0
+  var name = String(screenName || "")
+  for (var i = 0; i < cutouts.length; i++) {
+    var panel = cutouts[i]
+    if (!(panel.cutoutWidth > 0) || name.indexOf(panel.connector) !== 0) continue
+    if (Math.abs(mode.width - panel.width) <= 4 && Math.abs(mode.height - panel.height) <= 4)
+      return Math.floor((logicalWidth - Math.ceil(panel.cutoutWidth * logicalWidth / mode.width)) / 2)
+  }
+  return 0
 }
 
 // The cutout at the top of this screen, in logical pixels, or 0. `mode` is the
@@ -675,6 +692,7 @@ if (typeof module !== "undefined") {
     centerBesideRight: centerBesideRight,
     cutoutPending: cutoutPending,
     cutoutTop: cutoutTop,
+    cutoutLeftEdge: cutoutLeftEdge,
     isDrawnSlot: isDrawnSlot,
     notchFloor: notchFloor,
     parseCutouts: parseCutouts,

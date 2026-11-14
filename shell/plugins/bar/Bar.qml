@@ -737,7 +737,7 @@ Item {
     return monitor ? ({
       width: monitor.width,
       height: monitor.height,
-      transform: monitor.lastIpcObject ? monitor.lastIpcObject.transform : 0
+      transform: monitor.lastIpcObject ? monitor.lastIpcObject.transform : undefined
     }) : null
   }
 
@@ -1715,6 +1715,7 @@ Item {
     readonly property var panelMode: root.panelModeFor(screen)
 
     readonly property bool centerBesideRight: BarModel.centerBesideRight(root.displayCutouts, root.position, screen.name, screen.width, screen.height, screen.devicePixelRatio, panelMode)
+    readonly property int cutoutLeft: BarModel.cutoutLeftEdge(root.displayCutouts, root.position, screen.name, screen.width, screen.height, panelMode)
 
     readonly property bool cutoutPending: BarModel.cutoutPending(root.displayCutouts, root.position, screen.name, screen.width, screen.height, screen.devicePixelRatio, panelMode)
     property bool cutoutWaitOver: false
@@ -1899,18 +1900,13 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
         }
 
-        // Where a display notch covers the middle of the bar, the center
-        // sections run on just left of the right one. They keep their regions,
-        // so settings pushes, drag and drop, and panel routing still address
-        // them. The gap lets a drop at the seam land in the section the pointer
-        // is nearer to.
         CenterSections {
           window: barWindow
           pool: horizontalPool
           active: barWindow.centerBesideRight
           besideRight: true
-          anchors.right: rightModules.left
-          anchors.rightMargin: Style.space(4)
+          anchors.right: barWindow.cutoutLeft > 0 ? parent.right : rightModules.left
+          anchors.rightMargin: (barWindow.cutoutLeft > 0 ? parent.width - barWindow.cutoutLeft : 0) + Style.space(4)
           anchors.top: parent.top
           anchors.bottom: parent.bottom
         }

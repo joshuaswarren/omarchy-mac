@@ -139,4 +139,35 @@ const stateBarSizeFor = new Function('barSizes', 'barSize', apiFor[1], apiFor[2]
 assertEqual(stateBarSizeFor(copy, 26, 'eDP-1'), 40, 'a plugin reads a notch screen\'s thickness')
 assertEqual(stateBarSizeFor(copy, 26, 'HDMI-A-1'), 26, 'a plugin falls back to barSize for a screen with none')
 assertEqual(stateBarSizeFor({}, 26, 'eDP-1'), 26, 'a plugin under a bar without per-screen sizes gets barSize')
+
+const measured = bar.parseCutouts(JSON.stringify({ panels: [
+  { connector: 'eDP', width: 3024, height: 1964, top: 64, cutoutWidth: 420 }
+] }))
+assertEqual(bar.cutoutLeftEdge(measured, 'top', 'eDP-1', 1512, 982, mode(3024, 1964)), 651, 'measured cutout columns locate its left edge at scale 2')
+assertEqual(bar.cutoutLeftEdge(measured, 'top', 'eDP-1', 1890, 1228, mode(3024, 1964)), 813, 'fractional scales round the cutout outward')
+assertEqual(bar.cutoutLeftEdge(measured, 'top', 'eDP-1', 1512, 982, mode(3026, 1964)), 651, 'mode rounding keeps the measured panel match')
+assertEqual(bar.cutoutLeftEdge(cutouts, 'top', 'eDP-1', 1512, 982, mode(3024, 1964)), 0, 'widthless panels keep their existing placement')
+assertEqual(bar.cutoutLeftEdge(measured, 'top', 'DP-1', 1512, 982, mode(3024, 1964)), 0, 'external outputs keep their placement')
+assertEqual(bar.cutoutLeftEdge(measured, 'top', 'eDP-1', 1512, 993, mode(3024, 1986)), 0, 'a different panel height cannot borrow calibration')
+assertEqual(bar.cutoutLeftEdge(measured, 'top', 'eDP-1', 982, 1512, mode(3024, 1964)), 0, 'portrait logical geometry cannot use a landscape cutout')
+assertEqual(bar.cutoutLeftEdge(measured, 'top', 'eDP-1', 0, 982, mode(3024, 1964)), 0, 'invalid logical dimensions keep placement unchanged')
+for (const position of ['bottom', 'left', 'right'])
+  assertEqual(bar.cutoutLeftEdge(measured, position, 'eDP-1', 1512, 982, mode(3024, 1964)), 0, `${position} bars keep their placement`)
+for (const pending of [null, undefined, {}, { width: 3024, height: 1964 }, mode(0, 0)])
+  assertEqual(bar.cutoutLeftEdge(measured, 'top', 'eDP-1', 1512, 982, pending), 0, 'missing mode or orientation cannot select measured placement')
+for (const transform of [1, 2, 3, 5, 6, 7, null, false, true, '0', undefined])
+  assertEqual(bar.cutoutLeftEdge(measured, 'top', 'eDP-1', 1512, 982, { width: 3024, height: 1964, transform }), 0, `orientation ${String(transform)} cannot select top-notch placement`)
+assertEqual(bar.cutoutLeftEdge(measured, 'top', 'eDP-1', 1512, 982, mode(3024, 1964, 4)), 651, 'horizontal mirroring preserves a centered top cutout')
+for (const cutoutWidth of [true, false, '420', 420.5, 0, -1, 3024, null]) {
+  const invalid = bar.parseCutouts(JSON.stringify({ panels: [
+    { connector: 'eDP', width: 3024, height: 1964, top: 64, cutoutWidth }
+  ] }))
+  assertEqual(bar.cutoutLeftEdge(invalid, 'top', 'eDP-1', 1512, 982, mode(3024, 1964)), 0, `invalid cutout width ${String(cutoutWidth)} keeps placement`)
+  assertEqual(bar.cutoutTop(invalid, 'eDP-1', 1512, 982, 2, mode(3024, 1964)), 32, 'invalid optional width preserves the existing notch floor')
+}
+const monitorMode = extract(fs.readFileSync(root + '/shell/plugins/bar/Bar.qml', 'utf8'), 'panelModeFor')
+const panelModeFor = new Function('Hyprland', monitorMode[1], monitorMode[2])
+const earlyMode = panelModeFor({ monitorFor: () => ({ width: 3024, height: 1964 }) }, {})
+assertEqual(bar.cutoutLeftEdge(measured, 'top', 'eDP-1', 1512, 982, earlyMode), 0,
+  'a monitor without IPC orientation keeps its existing placement')
 JS

@@ -412,6 +412,8 @@ A panel with a camera cutout (a notch) at its top keeps a top bar out of it: the
 
 A panel matches a screen whose connector name starts with `connector` and whose mode, as `hyprctl monitors` reports it, is `width` x `height` physical pixels, at any scale; `top` is the physical rows the cutout covers. On such a panel, `[bar] notch-height` (logical pixels, not scaled with the font) sets the floor by hand. The bar reads the file when the shell starts and whenever it changes; a file installed where its directory didn't exist yet (the platform root itself, on a first install) is read at the next shell start.
 
+An entry may also provide `cutoutWidth`, a positive integer smaller than the panel width, in physical columns. It describes a centered cutout. With a matching mode and a known top-edge orientation, the three center sections sit just left of that cutout. A missing or invalid width keeps them beside the right section. Other bar positions and screens retain their layout. Measure the cutout before adding this optional value; the panel mode alone does not establish its width.
+
 Until Hyprland reports a screen's mode, a top bar there waits to appear if a description names the screen's connector, unless the logical size times Qt's whole-number scale already matches a panel. It then appears at its floor rather than growing once windows are laid out, and never guesses a floor for a panel nothing describes. After two seconds without a mode it appears without a floor. Notifications clear the bar as thick as it is on their screen. A plugin's `shell.bar` gives the same through `barSizeFor(screenName)` and the `barSizes` map (screen name to thickness); its `barSize` stays the configured size, which the widgets are drawn at.
 
 ## Custom bar modules
