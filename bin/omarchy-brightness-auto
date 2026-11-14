@@ -4,8 +4,17 @@
 # omarchy:args=[--once]
 # omarchy:examples=omarchy-brightness-auto | omarchy-brightness-auto --once
 
-sensors=(/sys/bus/iio/devices/iio:device*/in_illuminance_input)
-[[ -e ${sensors[0]} ]] || exit 0
+# Apple AOP also exposes the lid-angle sensor (aop-sensors-las): read sensors named als first.
+sensors=()
+for dir in /sys/bus/iio/devices/iio:device*; do
+  [[ -e $dir/in_illuminance_input ]] || continue
+  if [[ $(cat "$dir/name" 2>/dev/null) == *als* ]]; then
+    sensors=("$dir/in_illuminance_input" "${sensors[@]}")
+  else
+    sensors+=("$dir/in_illuminance_input")
+  fi
+done
+(( ${#sensors[@]} )) || exit 0
 device="$(omarchy-hw-display)" || exit 0
 state="${XDG_RUNTIME_DIR:-/tmp}/omarchy-brightness-auto.state"
 

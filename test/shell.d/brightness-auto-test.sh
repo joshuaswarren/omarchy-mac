@@ -87,6 +87,16 @@ run_auto
 [[ $(level) == "100" ]] || fail "a readable second sensor is used after an unreadable one (got $(level))"
 pass "an unreadable sensor leaves the backlight alone"
 
+# Apple AOP also exposes the lid-angle sensor next to the light sensor.
+reset 50
+sensor 0 1000
+echo aop-sensors-las >"$iio/iio:device0/name"
+sensor 1 0
+echo aop-sensors-als >"$iio/iio:device1/name"
+run_auto
+[[ $(level) == "5" ]] || fail "the sensor named als is read before others (got $(level))"
+pass "the sensor named als is read before others"
+
 # 30 lux maps to 52%: a 2% difference is noise, not worth a visible step.
 reset 50
 sensor 0 30
